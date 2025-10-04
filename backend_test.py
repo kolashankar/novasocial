@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NovaSocial Backend API Testing Suite
-Tests messaging system, stories system, and authentication with Socket.IO integration
+Comprehensive testing for Follow System, Notifications, Search & Discovery, and Recommendations
 """
 
 import requests
