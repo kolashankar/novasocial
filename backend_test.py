@@ -1,19 +1,42 @@
 #!/usr/bin/env python3
 """
-NovaSocial Backend Authentication System Tests
-Tests all authentication endpoints with comprehensive validation
+NovaSocial Backend API Testing Suite
+Tests messaging system, stories system, and authentication with Socket.IO integration
 """
 
 import requests
 import json
 import base64
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 import uuid
 
 # Backend URL from frontend/.env
 BACKEND_URL = "https://chatwave-social-1.preview.emergentagent.com/api"
 
-class AuthenticationTester:
+# Test users for messaging system
+TEST_USER_1 = {
+    "fullName": "Alice Johnson",
+    "username": "alice_test_user",
+    "email": "alice.test@example.com",
+    "password": "testpassword123"
+}
+TEST_USER_2 = {
+    "fullName": "Bob Smith", 
+    "username": "bob_test_user",
+    "email": "bob.test@example.com",
+    "password": "testpassword456"
+}
+
+# Global variables to store tokens and user data
+user1_token = None
+user1_data = None
+user2_token = None
+user2_data = None
+test_conversation_id = None
+test_story_id = None
+
+class ComprehensiveTester:
     def __init__(self):
         self.base_url = BACKEND_URL
         self.test_user_data = {
