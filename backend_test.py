@@ -14,27 +14,95 @@ import uuid
 # Backend URL from frontend/.env
 BACKEND_URL = "https://mobile-social-app-1.preview.emergentagent.com/api"
 
-# Test users for messaging system
-TEST_USER_1 = {
-    "fullName": "Alice Johnson",
-    "username": "alice_test_user",
-    "email": "alice.test@example.com",
-    "password": "testpassword123"
-}
-TEST_USER_2 = {
-    "fullName": "Bob Smith", 
-    "username": "bob_test_user",
-    "email": "bob.test@example.com",
-    "password": "testpassword456"
-}
-
-# Global variables to store tokens and user data
-user1_token = None
-user1_data = None
-user2_token = None
-user2_data = None
-test_conversation_id = None
-test_story_id = None
+class NovaSocialTester:
+    def __init__(self):
+        self.base_url = BACKEND_URL
+        self.session = requests.Session()
+        self.session.timeout = 30
+        self.test_users = []
+        self.test_posts = []
+        self.auth_tokens = {}
+        
+    def log(self, message: str, level: str = "INFO"):
+        """Log test messages with timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] {level}: {message}")
+    
+    def make_request(self, method: str, endpoint: str, data: dict = None, headers: dict = None, token: str = None) -> requests.Response:
+        """Make HTTP request with proper error handling"""
+        url = f"{self.base_url}{endpoint}"
+        
+        # Set up headers
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
+        if token:
+            request_headers["Authorization"] = f"Bearer {token}"
+        
+        try:
+            if method.upper() == "GET":
+                response = self.session.get(url, headers=request_headers, params=data)
+            elif method.upper() == "POST":
+                response = self.session.post(url, headers=request_headers, json=data)
+            elif method.upper() == "PUT":
+                response = self.session.put(url, headers=request_headers, json=data)
+            elif method.upper() == "DELETE":
+                response = self.session.delete(url, headers=request_headers, json=data)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+            
+            return response
+        except requests.exceptions.RequestException as e:
+            self.log(f"Request failed: {e}", "ERROR")
+            raise
+    
+    def create_test_user(self, username_suffix: str = None) -> Dict:
+        """Create a test user and return user data with token"""
+        if not username_suffix:
+            username_suffix = str(uuid.uuid4())[:8]
+        
+        user_data = {
+            "fullName": f"Test User {username_suffix}",
+            "username": f"testuser_{username_suffix}",
+            "email": f"test_{username_suffix}@novasocial.com",
+            "password": "TestPassword123!"
+        }
+        
+        response = self.make_request("POST", "/auth/register", user_data)
+        
+        if response.status_code == 201:
+            result = response.json()
+            self.test_users.append(result["user"])
+            self.auth_tokens[result["user"]["id"]] = result["token"]
+            self.log(f"Created test user: {user_data['username']}")
+            return result
+        else:
+            self.log(f"Failed to create user {user_data['username']}: {response.status_code} - {response.text}", "ERROR")
+            raise Exception(f"User creation failed: {response.text}")
+    
+    def create_test_post(self, user_token: str, caption: str = None, hashtags: List[str] = None) -> Dict:
+        """Create a test post"""
+        if not caption:
+            caption = f"Test post created at {datetime.now().isoformat()}"
+        
+        post_data = {
+            "caption": caption,
+            "media": ["data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/8A"],
+            "mediaTypes": ["image"],
+            "hashtags": hashtags or ["test", "novasocial"],
+            "taggedUsers": []
+        }
+        
+        response = self.make_request("POST", "/posts", post_data, token=user_token)
+        
+        if response.status_code == 201:
+            result = response.json()
+            self.test_posts.append(result)
+            self.log(f"Created test post: {result['id']}")
+            return result
+        else:
+            self.log(f"Failed to create post: {response.status_code} - {response.text}", "ERROR")
+            raise Exception(f"Post creation failed: {response.text}")
 
 class ComprehensiveTester:
     def __init__(self):
