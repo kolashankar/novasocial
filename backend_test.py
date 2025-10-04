@@ -861,7 +861,7 @@ def run_comprehensive_tests():
     print_test_header("FINAL TEST SUMMARY")
     
     total_tests = len(test_results)
-    passed_tests = sum(test_results.values())
+    passed_tests = sum(1 for result in test_results.values() if result is True)
     
     for test_name, result in test_results.items():
         status = "✅ PASS" if result else "❌ FAIL"
