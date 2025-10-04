@@ -887,10 +887,383 @@ async def get_post_comments(post_id: str, current_user = Depends(get_current_use
     return result
 
 
+# Phase 6 - Engagement Features Models
+class NotificationCreate(BaseModel):
+    recipientId: str
+    type: str  # "like", "comment", "follow", "mention"
+    title: str
+    message: str
+    relatedId: Optional[str] = None  # Post/Comment/User ID
+    relatedType: Optional[str] = None  # "post", "comment", "user"
+
+class NotificationResponse(BaseModel):
+    id: str
+    recipientId: str
+    senderId: Optional[str]
+    sender: Optional[UserResponse]
+    type: str
+    title: str
+    message: str
+    relatedId: Optional[str]
+    relatedType: Optional[str]
+    isRead: bool
+    createdAt: datetime
+
+class FollowRequest(BaseModel):
+    targetUserId: str
+
+class SearchQuery(BaseModel):
+    query: str
+    type: Optional[str] = "all"  # "users", "posts", "hashtags", "all"
+
+class SearchResponse(BaseModel):
+    users: List[UserResponse]
+    posts: List[PostResponse]
+    hashtags: List[str]
+
+# Phase 6 - Engagement Routes
+@api_router.post("/users/{user_id}/follow")
+async def follow_user(user_id: str, current_user = Depends(get_current_user)):
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+    
+    # Check if target user exists
+    target_user = await db.users.find_one({"id": user_id})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already following
+    existing_follow = await db.follows.find_one({
+        "followerId": current_user["id"],
+        "followingId": user_id
+    })
+    
+    if existing_follow:
+        raise HTTPException(status_code=400, detail="Already following this user")
+    
+    # Create follow relationship
+    follow_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_follow = {
+        "id": follow_id,
+        "followerId": current_user["id"],
+        "followingId": user_id,
+        "createdAt": now
+    }
+    
+    await db.follows.insert_one(new_follow)
+    
+    # Create notification
+    notification = {
+        "id": str(uuid.uuid4()),
+        "recipientId": user_id,
+        "senderId": current_user["id"],
+        "type": "follow",
+        "title": "New Follower",
+        "message": f"{current_user['username']} started following you",
+        "relatedId": current_user["id"],
+        "relatedType": "user",
+        "isRead": False,
+        "createdAt": now
+    }
+    
+    await db.notifications.insert_one(notification)
+    
+    return {"followed": True}
+
+@api_router.delete("/users/{user_id}/follow")
+async def unfollow_user(user_id: str, current_user = Depends(get_current_user)):
+    result = await db.follows.delete_one({
+        "followerId": current_user["id"],
+        "followingId": user_id
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Follow relationship not found")
+    
+    return {"unfollowed": True}
+
+@api_router.get("/users/{user_id}/followers", response_model=List[UserResponse])
+async def get_user_followers(user_id: str, current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Get follower IDs
+    follows = await db.follows.find({"followingId": user_id}).skip(skip).limit(limit).to_list(limit)
+    follower_ids = [follow["followerId"] for follow in follows]
+    
+    if not follower_ids:
+        return []
+    
+    # Get follower users
+    followers = await db.users.find({"id": {"$in": follower_ids}}).to_list(len(follower_ids))
+    return [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in followers]
+
+@api_router.get("/users/{user_id}/following", response_model=List[UserResponse])
+async def get_user_following(user_id: str, current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Get following IDs
+    follows = await db.follows.find({"followerId": user_id}).skip(skip).limit(limit).to_list(limit)
+    following_ids = [follow["followingId"] for follow in follows]
+    
+    if not following_ids:
+        return []
+    
+    # Get following users
+    following = await db.users.find({"id": {"$in": following_ids}}).to_list(len(following_ids))
+    return [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in following]
+
+@api_router.post("/comments/{comment_id}/like")
+async def toggle_comment_like(comment_id: str, current_user = Depends(get_current_user)):
+    comment = await db.comments.find_one({"id": comment_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    user_id = current_user["id"]
+    likes = comment.get("likes", [])
+    
+    if user_id in likes:
+        # Unlike
+        await db.comments.update_one(
+            {"id": comment_id},
+            {
+                "$pull": {"likes": user_id},
+                "$inc": {"likesCount": -1}
+            }
+        )
+        liked = False
+    else:
+        # Like
+        await db.comments.update_one(
+            {"id": comment_id},
+            {
+                "$addToSet": {"likes": user_id},
+                "$inc": {"likesCount": 1}
+            }
+        )
+        liked = True
+        
+        # Create notification if liking someone else's comment
+        if comment["authorId"] != user_id:
+            notification = {
+                "id": str(uuid.uuid4()),
+                "recipientId": comment["authorId"],
+                "senderId": current_user["id"],
+                "type": "like",
+                "title": "Comment Liked",
+                "message": f"{current_user['username']} liked your comment",
+                "relatedId": comment_id,
+                "relatedType": "comment",
+                "isRead": False,
+                "createdAt": datetime.utcnow()
+            }
+            await db.notifications.insert_one(notification)
+    
+    return {"liked": liked, "likesCount": comment.get("likesCount", 0) + (1 if liked else -1)}
+
+# Notifications Routes
+@api_router.get("/notifications", response_model=List[NotificationResponse])
+async def get_notifications(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    notifications = await db.notifications.find({
+        "recipientId": current_user["id"]
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get all unique sender IDs
+    sender_ids = list(set(notification.get("senderId") for notification in notifications if notification.get("senderId")))
+    
+    # Get all senders in one query
+    senders = await db.users.find({"id": {"$in": sender_ids}}).to_list(len(sender_ids)) if sender_ids else []
+    senders_map = {sender["id"]: sender for sender in senders}
+    
+    # Build response
+    result = []
+    for notification in notifications:
+        sender_data = None
+        if notification.get("senderId"):
+            sender_data = senders_map.get(notification["senderId"])
+            sender = UserResponse(**{k: v for k, v in sender_data.items() if k != "password"}) if sender_data else None
+        else:
+            sender = None
+        
+        result.append(NotificationResponse(**notification, sender=sender))
+    
+    return result
+
+@api_router.put("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, current_user = Depends(get_current_user)):
+    result = await db.notifications.update_one(
+        {"id": notification_id, "recipientId": current_user["id"]},
+        {"$set": {"isRead": True}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    return {"read": True}
+
+@api_router.put("/notifications/read-all")
+async def mark_all_notifications_read(current_user = Depends(get_current_user)):
+    await db.notifications.update_many(
+        {"recipientId": current_user["id"], "isRead": False},
+        {"$set": {"isRead": True}}
+    )
+    
+    return {"allRead": True}
+
+# Phase 7 - Search and Discovery Routes
+@api_router.get("/search", response_model=SearchResponse)
+async def search(q: str, type: str = "all", current_user = Depends(get_current_user), limit: int = 20):
+    users = []
+    posts = []
+    hashtags = []
+    
+    if type in ["all", "users"]:
+        # Search users by username or fullName
+        users_cursor = await db.users.find({
+            "$or": [
+                {"username": {"$regex": q, "$options": "i"}},
+                {"fullName": {"$regex": q, "$options": "i"}}
+            ]
+        }).limit(limit).to_list(limit)
+        users = [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in users_cursor]
+    
+    if type in ["all", "posts"]:
+        # Search posts by caption
+        posts_cursor = await db.posts.find({
+            "caption": {"$regex": q, "$options": "i"}
+        }).sort("createdAt", -1).limit(limit).to_list(limit)
+        
+        # Get authors for posts
+        author_ids = list(set(post["authorId"] for post in posts_cursor))
+        authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids)) if author_ids else []
+        authors_map = {author["id"]: author for author in authors}
+        
+        for post in posts_cursor:
+            author_data = authors_map.get(post["authorId"])
+            if author_data:
+                author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+                posts.append(PostResponse(**post, author=author, comments=[]))
+    
+    if type in ["all", "hashtags"]:
+        # Search hashtags
+        hashtag_posts = await db.posts.find({
+            "hashtags": {"$regex": q, "$options": "i"}
+        }).limit(limit).to_list(limit)
+        
+        hashtag_set = set()
+        for post in hashtag_posts:
+            for hashtag in post.get("hashtags", []):
+                if q.lower() in hashtag.lower():
+                    hashtag_set.add(hashtag)
+        
+        hashtags = list(hashtag_set)[:limit]
+    
+    return SearchResponse(users=users, posts=posts, hashtags=hashtags)
+
+@api_router.get("/trending/hashtags")
+async def get_trending_hashtags(current_user = Depends(get_current_user), limit: int = 20):
+    # Aggregate hashtags from recent posts (last 7 days)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    
+    posts = await db.posts.find({
+        "createdAt": {"$gte": seven_days_ago}
+    }).to_list(None)
+    
+    # Count hashtag usage
+    hashtag_counts = {}
+    for post in posts:
+        for hashtag in post.get("hashtags", []):
+            hashtag_counts[hashtag] = hashtag_counts.get(hashtag, 0) + 1
+    
+    # Sort by popularity and return top hashtags
+    trending = sorted(hashtag_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    
+    return [{"hashtag": tag, "count": count} for tag, count in trending]
+
+@api_router.get("/feed/recommendations", response_model=List[PostResponse])
+async def get_recommended_feed(current_user = Depends(get_current_user), skip: int = 0, limit: int = 20):
+    # Simple recommendation algorithm based on user's activity
+    
+    # 1. Get user's recent likes to understand interests
+    recent_likes = await db.posts.find({
+        "likes": current_user["id"]
+    }).sort("createdAt", -1).limit(10).to_list(10)
+    
+    # 2. Get hashtags from liked posts
+    liked_hashtags = set()
+    for post in recent_likes:
+        liked_hashtags.update(post.get("hashtags", []))
+    
+    # 3. Get users the current user follows
+    follows = await db.follows.find({"followerId": current_user["id"]}).to_list(None)
+    following_ids = [follow["followingId"] for follow in follows]
+    
+    # 4. Build recommendation query
+    recommendation_query = {
+        "$or": []
+    }
+    
+    # Posts from followed users (higher priority)
+    if following_ids:
+        recommendation_query["$or"].append({"authorId": {"$in": following_ids}})
+    
+    # Posts with similar hashtags
+    if liked_hashtags:
+        recommendation_query["$or"].append({"hashtags": {"$in": list(liked_hashtags)}})
+    
+    # If no specific interests, get popular posts (posts with most likes)
+    if not recommendation_query["$or"]:
+        recommendation_query = {"likesCount": {"$gte": 1}}
+    
+    # Get recommended posts
+    posts = await db.posts.find(recommendation_query).sort([
+        ("likesCount", -1),  # Sort by popularity first
+        ("createdAt", -1)    # Then by recency
+    ]).skip(skip).limit(limit).to_list(limit)
+    
+    # Get authors
+    author_ids = list(set(post["authorId"] for post in posts))
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids)) if author_ids else []
+    authors_map = {author["id"]: author for author in authors}
+    
+    # Build response
+    result = []
+    for post in posts:
+        author_data = authors_map.get(post["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(PostResponse(**post, author=author, comments=[]))
+    
+    return result
+
+@api_router.get("/users/suggestions", response_model=List[UserResponse])
+async def get_user_suggestions(current_user = Depends(get_current_user), limit: int = 20):
+    # Get users that current user is not following
+    follows = await db.follows.find({"followerId": current_user["id"]}).to_list(None)
+    following_ids = [follow["followingId"] for follow in follows]
+    following_ids.append(current_user["id"])  # Exclude self
+    
+    # Get suggested users (users with most followers that current user doesn't follow)
+    pipeline = [
+        {"$match": {"id": {"$nin": following_ids}}},
+        {
+            "$lookup": {
+                "from": "follows",
+                "localField": "id",
+                "foreignField": "followingId",
+                "as": "followers"
+            }
+        },
+        {"$addFields": {"followerCount": {"$size": "$followers"}}},
+        {"$sort": {"followerCount": -1}},
+        {"$limit": limit}
+    ]
+    
+    suggested_users = await db.users.aggregate(pipeline).to_list(limit)
+    
+    return [UserResponse(**{k: v for k, v in user.items() if k not in ["password", "followers"]}) for user in suggested_users]
+
 # Original routes
 @api_router.get("/")
 async def root():
-    return {"message": "NovaSocial API"}
+    return {"message": "NovaSocial API - Phases 1-7 Complete"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
