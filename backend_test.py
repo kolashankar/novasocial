@@ -57,6 +57,352 @@ class ComprehensiveTester:
             print(f"    Details: {details}")
         print()
 
+def print_test_header(test_name):
+    print(f"\n{'='*60}")
+    print(f"TESTING: {test_name}")
+    print(f"{'='*60}")
+
+def print_result(test_name, success, details=""):
+    status = "✅ PASS" if success else "❌ FAIL"
+    print(f"{status} - {test_name}")
+    if details:
+        print(f"   Details: {details}")
+
+def create_test_image_base64():
+    """Create a simple test image in base64 format"""
+    # Simple 1x1 pixel PNG in base64
+    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jU77zgAAAABJRU5ErkJggg=="
+
+def test_user_authentication():
+    """Test user registration and login to get JWT tokens"""
+    global user1_token, user1_data, user2_token, user2_data
+    
+    print_test_header("USER AUTHENTICATION SYSTEM")
+    
+    # Test User 1 Registration
+    try:
+        response = requests.post(f"{BACKEND_URL}/auth/register", json=TEST_USER_1)
+        if response.status_code == 201 or response.status_code == 200:
+            data = response.json()
+            user1_token = data.get("token")
+            user1_data = data.get("user")
+            print_result("User 1 Registration", True, f"User ID: {user1_data.get('id')}")
+        elif response.status_code == 400 and "already" in response.text.lower():
+            # User already exists, try login
+            login_response = requests.post(f"{BACKEND_URL}/auth/login", json={
+                "email": TEST_USER_1["email"],
+                "password": TEST_USER_1["password"]
+            })
+            if login_response.status_code == 200:
+                data = login_response.json()
+                user1_token = data.get("token")
+                user1_data = data.get("user")
+                print_result("User 1 Login (existing user)", True, f"User ID: {user1_data.get('id')}")
+            else:
+                print_result("User 1 Authentication", False, f"Login failed: {login_response.text}")
+                return False
+        else:
+            print_result("User 1 Registration", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("User 1 Authentication", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test User 2 Registration
+    try:
+        response = requests.post(f"{BACKEND_URL}/auth/register", json=TEST_USER_2)
+        if response.status_code == 201 or response.status_code == 200:
+            data = response.json()
+            user2_token = data.get("token")
+            user2_data = data.get("user")
+            print_result("User 2 Registration", True, f"User ID: {user2_data.get('id')}")
+        elif response.status_code == 400 and "already" in response.text.lower():
+            # User already exists, try login
+            login_response = requests.post(f"{BACKEND_URL}/auth/login", json={
+                "email": TEST_USER_2["email"],
+                "password": TEST_USER_2["password"]
+            })
+            if login_response.status_code == 200:
+                data = login_response.json()
+                user2_token = data.get("token")
+                user2_data = data.get("user")
+                print_result("User 2 Login (existing user)", True, f"User ID: {user2_data.get('id')}")
+            else:
+                print_result("User 2 Authentication", False, f"Login failed: {login_response.text}")
+                return False
+        else:
+            print_result("User 2 Registration", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("User 2 Authentication", False, f"Exception: {str(e)}")
+        return False
+    
+    return user1_token and user2_token
+
+def test_messaging_system():
+    """Test the complete messaging system"""
+    global test_conversation_id
+    
+    print_test_header("MESSAGING SYSTEM")
+    
+    if not user1_token or not user2_token:
+        print_result("Messaging System", False, "Authentication tokens not available")
+        return False
+    
+    headers1 = {"Authorization": f"Bearer {user1_token}"}
+    headers2 = {"Authorization": f"Bearer {user2_token}"}
+    
+    # Test 1: Create a new conversation
+    try:
+        conversation_data = {
+            "participantIds": [user1_data["id"], user2_data["id"]],
+            "isGroup": False
+        }
+        response = requests.post(f"{BACKEND_URL}/conversations", json=conversation_data, headers=headers1)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            conv_data = response.json()
+            test_conversation_id = conv_data.get("id")
+            print_result("POST /api/conversations - Create conversation", True, f"Conversation ID: {test_conversation_id}")
+        else:
+            print_result("POST /api/conversations - Create conversation", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("POST /api/conversations - Create conversation", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 2: Get user conversations
+    try:
+        response = requests.get(f"{BACKEND_URL}/conversations", headers=headers1)
+        
+        if response.status_code == 200:
+            conversations = response.json()
+            found_conversation = any(conv.get("id") == test_conversation_id for conv in conversations)
+            print_result("GET /api/conversations - Get user conversations", found_conversation, f"Found {len(conversations)} conversations")
+        else:
+            print_result("GET /api/conversations - Get user conversations", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("GET /api/conversations - Get user conversations", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 3: Send a message
+    try:
+        message_data = {
+            "conversationId": test_conversation_id,
+            "text": "Hello! This is a test message from Alice.",
+            "messageType": "text"
+        }
+        response = requests.post(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", json=message_data, headers=headers1)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            message_response = response.json()
+            print_result("POST /api/conversations/{id}/messages - Send message", True, f"Message ID: {message_response.get('id')}")
+        else:
+            print_result("POST /api/conversations/{id}/messages - Send message", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("POST /api/conversations/{id}/messages - Send message", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 4: Send a message with media
+    try:
+        message_data = {
+            "conversationId": test_conversation_id,
+            "text": "Here's an image!",
+            "messageType": "image",
+            "media": create_test_image_base64()
+        }
+        response = requests.post(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", json=message_data, headers=headers2)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            message_response = response.json()
+            print_result("POST /api/conversations/{id}/messages - Send image message", True, f"Message ID: {message_response.get('id')}")
+        else:
+            print_result("POST /api/conversations/{id}/messages - Send image message", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("POST /api/conversations/{id}/messages - Send image message", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 5: Get conversation messages
+    try:
+        response = requests.get(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", headers=headers1)
+        
+        if response.status_code == 200:
+            messages = response.json()
+            print_result("GET /api/conversations/{id}/messages - Get messages", True, f"Retrieved {len(messages)} messages")
+            
+            # Verify message content
+            text_message = next((msg for msg in messages if msg.get("messageType") == "text"), None)
+            image_message = next((msg for msg in messages if msg.get("messageType") == "image"), None)
+            
+            if text_message and image_message:
+                print_result("Message content validation", True, "Both text and image messages found")
+            else:
+                print_result("Message content validation", False, "Missing expected message types")
+        else:
+            print_result("GET /api/conversations/{id}/messages - Get messages", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("GET /api/conversations/{id}/messages - Get messages", False, f"Exception: {str(e)}")
+        return False
+    
+    return True
+
+def test_stories_system():
+    """Test the complete stories system"""
+    global test_story_id
+    
+    print_test_header("STORIES SYSTEM")
+    
+    if not user1_token or not user2_token:
+        print_result("Stories System", False, "Authentication tokens not available")
+        return False
+    
+    headers1 = {"Authorization": f"Bearer {user1_token}"}
+    headers2 = {"Authorization": f"Bearer {user2_token}"}
+    
+    # Test 1: Create a new story
+    try:
+        story_data = {
+            "media": create_test_image_base64(),
+            "mediaType": "image",
+            "text": "This is my test story!",
+            "textPosition": {"x": 0.5, "y": 0.3},
+            "textStyle": {"color": "#ffffff", "fontSize": 24},
+            "duration": 24
+        }
+        response = requests.post(f"{BACKEND_URL}/stories", json=story_data, headers=headers1)
+        
+        if response.status_code == 200 or response.status_code == 201:
+            story_response = response.json()
+            test_story_id = story_response.get("id")
+            print_result("POST /api/stories - Create story", True, f"Story ID: {test_story_id}")
+        else:
+            print_result("POST /api/stories - Create story", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("POST /api/stories - Create story", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 2: Get stories feed
+    try:
+        response = requests.get(f"{BACKEND_URL}/stories/feed", headers=headers2)
+        
+        if response.status_code == 200:
+            stories = response.json()
+            found_story = any(story.get("id") == test_story_id for story in stories)
+            print_result("GET /api/stories/feed - Get stories feed", found_story, f"Found {len(stories)} stories")
+        else:
+            print_result("GET /api/stories/feed - Get stories feed", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("GET /api/stories/feed - Get stories feed", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 3: View a story
+    try:
+        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
+        
+        if response.status_code == 200:
+            view_response = response.json()
+            print_result("POST /api/stories/{id}/view - View story", True, f"Viewed: {view_response.get('viewed')}")
+        else:
+            print_result("POST /api/stories/{id}/view - View story", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("POST /api/stories/{id}/view - View story", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 4: View story again (should not increment view count)
+    try:
+        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
+        
+        if response.status_code == 200:
+            print_result("POST /api/stories/{id}/view - View story again", True, "Duplicate view handled correctly")
+        else:
+            print_result("POST /api/stories/{id}/view - View story again", False, f"Status: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print_result("POST /api/stories/{id}/view - View story again", False, f"Exception: {str(e)}")
+    
+    # Test 5: Delete story (by owner)
+    try:
+        response = requests.delete(f"{BACKEND_URL}/stories/{test_story_id}", headers=headers1)
+        
+        if response.status_code == 200:
+            delete_response = response.json()
+            print_result("DELETE /api/stories/{id} - Delete story", True, f"Deleted: {delete_response.get('deleted')}")
+        else:
+            print_result("DELETE /api/stories/{id} - Delete story", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("DELETE /api/stories/{id} - Delete story", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 6: Try to view deleted story (should fail)
+    try:
+        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
+        
+        if response.status_code == 404:
+            print_result("View deleted story - Error handling", True, "Correctly returns 404 for deleted story")
+        else:
+            print_result("View deleted story - Error handling", False, f"Expected 404, got {response.status_code}")
+    except Exception as e:
+        print_result("View deleted story - Error handling", False, f"Exception: {str(e)}")
+    
+    return True
+
+def test_error_handling():
+    """Test error handling and validation"""
+    print_test_header("ERROR HANDLING & VALIDATION")
+    
+    if not user1_token:
+        print_result("Error Handling Tests", False, "Authentication token not available")
+        return False
+    
+    headers = {"Authorization": f"Bearer {user1_token}"}
+    
+    # Test 1: Access conversation without permission
+    try:
+        fake_conversation_id = str(uuid.uuid4())
+        response = requests.get(f"{BACKEND_URL}/conversations/{fake_conversation_id}/messages", headers=headers)
+        
+        if response.status_code == 404:
+            print_result("Access non-existent conversation", True, "Correctly returns 404")
+        else:
+            print_result("Access non-existent conversation", False, f"Expected 404, got {response.status_code}")
+    except Exception as e:
+        print_result("Access non-existent conversation", False, f"Exception: {str(e)}")
+    
+    # Test 2: Create story without media
+    try:
+        story_data = {
+            "mediaType": "image",
+            "text": "Story without media"
+        }
+        response = requests.post(f"{BACKEND_URL}/stories", json=story_data, headers=headers)
+        
+        if response.status_code == 422:  # Validation error
+            print_result("Create story without media", True, "Correctly validates required fields")
+        else:
+            print_result("Create story without media", False, f"Expected validation error, got {response.status_code}")
+    except Exception as e:
+        print_result("Create story without media", False, f"Exception: {str(e)}")
+    
+    # Test 3: Unauthorized access
+    try:
+        response = requests.get(f"{BACKEND_URL}/conversations")
+        
+        if response.status_code == 403 or response.status_code == 401:
+            print_result("Unauthorized access", True, "Correctly requires authentication")
+        else:
+            print_result("Unauthorized access", False, f"Expected 401/403, got {response.status_code}")
+    except Exception as e:
+        print_result("Unauthorized access", False, f"Exception: {str(e)}")
+    
+    return True
+
     def test_user_registration(self):
         """Test user registration endpoint"""
         print("=" * 60)
