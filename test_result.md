@@ -204,10 +204,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "User Authentication System"
-    - "MongoDB User Schema"
     - "Auth Screens UI/UX"
     - "Navigation System"
+    - "Post Creation System"
+    - "Instagram-like Feed UI"
+    - "Reels/Short Videos System"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
