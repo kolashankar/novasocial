@@ -1,7 +1,8 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { COLORS } from '../../src/utils/constants';
 
 export default function TabLayout() {
@@ -35,6 +36,34 @@ export default function TabLayout() {
           title: 'Search',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'search' : 'search-outline'} size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="create-post"
+        options={{
+          title: '',
+          tabBarIcon: ({ color }) => (
+            <TouchableOpacity
+              style={{
+                backgroundColor: COLORS.primary,
+                borderRadius: 25,
+                width: 50,
+                height: 50,
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: 10,
+              }}
+              onPress={() => router.push('/create-post')}
+            >
+              <Ionicons name="add" size={28} color={COLORS.white} />
+            </TouchableOpacity>
+          ),
+          tabBarButton: (props) => (
+            <TouchableOpacity
+              {...props}
+              onPress={() => router.push('/create-post')}
+            />
           ),
         }}
       />
