@@ -67,6 +67,48 @@ class AuthResponse(BaseModel):
     user: UserResponse
     token: str
 
+# Post Models
+class PostCreate(BaseModel):
+    caption: str
+    media: List[str]  # List of base64 images/videos
+    mediaTypes: List[str]  # ["image", "video", ...]
+    hashtags: Optional[List[str]] = []
+    taggedUsers: Optional[List[str]] = []
+
+class PostResponse(BaseModel):
+    id: str
+    authorId: str
+    author: UserResponse
+    caption: str
+    media: List[str]
+    mediaTypes: List[str]
+    hashtags: List[str]
+    taggedUsers: List[str]
+    likes: List[str]  # List of user IDs who liked
+    likesCount: int
+    comments: List[dict]  # Will be populated separately
+    commentsCount: int
+    createdAt: datetime
+    updatedAt: datetime
+
+class CommentCreate(BaseModel):
+    text: str
+    postId: str
+
+class CommentResponse(BaseModel):
+    id: str
+    postId: str
+    authorId: str
+    author: UserResponse
+    text: str
+    likes: List[str]
+    likesCount: int
+    createdAt: datetime
+
+class LikeToggle(BaseModel):
+    targetId: str  # Post or Comment ID
+    targetType: str  # "post" or "comment"
+
 class StatusCheck(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     client_name: str
