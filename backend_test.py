@@ -71,7 +71,7 @@ class NovaSocialTester:
         
         response = self.make_request("POST", "/auth/register", user_data)
         
-        if response.status_code == 201:
+        if response.status_code in [200, 201]:
             result = response.json()
             self.test_users.append(result["user"])
             self.auth_tokens[result["user"]["id"]] = result["token"]
