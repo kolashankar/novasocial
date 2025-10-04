@@ -84,11 +84,13 @@ def _pre_hash_password(password: str) -> bytes:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     pre_hashed = _pre_hash_password(plain_password)
-    return pwd_context.verify(pre_hashed.decode('utf-8'), hashed_password)
+    return bcrypt.checkpw(pre_hashed, hashed_password.encode('utf-8'))
 
 def get_password_hash(password: str) -> str:
     pre_hashed = _pre_hash_password(password)
-    return pwd_context.hash(pre_hashed.decode('utf-8'))
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pre_hashed, salt)
+    return hashed.decode('utf-8')
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
