@@ -11,7 +11,7 @@ from datetime import datetime
 import uuid
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://photofeed-dev.preview.emergentagent.com/api"
+BACKEND_URL = "https://chatwave-social-1.preview.emergentagent.com/api"
 
 class AuthenticationTester:
     def __init__(self):
