@@ -204,11 +204,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Auth Screens UI/UX"
-    - "Navigation System"
-    - "Post Creation System"
-    - "Instagram-like Feed UI"
-    - "Reels/Short Videos System"
+    - "Follow System & Engagement Features"
+    - "Notifications System" 
+    - "Search & Discovery System"
+    - "Recommendation Engine"
+    - "Backend Models Organization & 7-Level Structure"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
