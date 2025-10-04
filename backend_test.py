@@ -836,6 +836,47 @@ def test_error_handling():
         print("🏁 AUTHENTICATION TESTING COMPLETE")
         print("=" * 60)
 
+def run_comprehensive_tests():
+    """Run all backend tests including messaging and stories"""
+    print("🚀 Starting NovaSocial Backend Comprehensive API Tests")
+    print(f"Backend URL: {BACKEND_URL}")
+    print(f"Test started at: {datetime.now()}")
+    
+    test_results = {
+        "authentication": False,
+        "messaging": False,
+        "stories": False,
+        "error_handling": False
+    }
+    
+    # Run tests in sequence
+    test_results["authentication"] = test_user_authentication()
+    
+    if test_results["authentication"]:
+        test_results["messaging"] = test_messaging_system()
+        test_results["stories"] = test_stories_system()
+        test_results["error_handling"] = test_error_handling()
+    
+    # Print final summary
+    print_test_header("FINAL TEST SUMMARY")
+    
+    total_tests = len(test_results)
+    passed_tests = sum(test_results.values())
+    
+    for test_name, result in test_results.items():
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status} - {test_name.upper()}")
+    
+    print(f"\n📊 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
+    
+    if passed_tests == total_tests:
+        print("🎉 ALL TESTS PASSED! Backend is working correctly.")
+        return True
+    else:
+        print("⚠️  SOME TESTS FAILED! Check the details above.")
+        return False
+
 if __name__ == "__main__":
-    tester = AuthenticationTester()
-    tester.run_all_tests()
+    # Run comprehensive tests for messaging and stories
+    success = run_comprehensive_tests()
+    exit(0 if success else 1)
