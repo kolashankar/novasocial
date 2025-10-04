@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import uuid
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://chatwave-social-1.preview.emergentagent.com/api"
+BACKEND_URL = "https://storyflow-backend.preview.emergentagent.com/api"
 
 # Test users for messaging system
 TEST_USER_1 = {
