@@ -35,8 +35,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
 
 security = HTTPBearer()
 
+# Create Socket.IO server
+sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins="*")
+
 # Create the main app without a prefix
 app = FastAPI()
+
+# Mount Socket.IO
+socket_app = socketio.ASGIApp(sio, app)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
