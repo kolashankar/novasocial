@@ -61,23 +61,6 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/notification-icon.png",
-          "color": "#ffffff",
-          "sounds": [
-            "./assets/sounds/notification.wav"
-          ]
-        }
-      ],
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "NovaSocial needs access to your photos to share them in posts and stories.",
-          "cameraPermission": "NovaSocial needs access to your camera to capture photos and videos."
-        }
       ]
     ],
     "experiments": {
