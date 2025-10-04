@@ -875,6 +875,22 @@ async def create_comment(post_id: str, comment_data: CommentCreate, current_user
         {"$inc": {"commentsCount": 1}}
     )
     
+    # Create notification if commenting on someone else's post
+    if post["authorId"] != current_user["id"]:
+        notification = {
+            "id": str(uuid.uuid4()),
+            "recipientId": post["authorId"],
+            "senderId": current_user["id"],
+            "type": "comment",
+            "title": "New Comment",
+            "message": f"{current_user['username']} commented on your post",
+            "relatedId": post_id,
+            "relatedType": "post",
+            "isRead": False,
+            "createdAt": now
+        }
+        await db.notifications.insert_one(notification)
+    
     # Get author info for response
     author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
     
