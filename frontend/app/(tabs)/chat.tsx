@@ -1,6 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { ConversationsList } from '../../src/features/messaging/components/conversations/ConversationsList';
 import { COLORS, SPACING } from '../../src/utils/constants';
 
 export default function Chat() {
@@ -8,14 +12,32 @@ export default function Chat() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Messages</Text>
+        
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => router.push('/(tabs)/chat/new-chat')}
+          >
+            <Ionicons name="person-add-outline" size={24} color="#667eea" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => router.push('/story-upload')}
+          >
+            <LinearGradient
+              colors={['#667eea', '#764ba2']}
+              style={styles.storyButton}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <Ionicons name="add" size={20} color="#ffffff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
       </View>
       
-      <View style={styles.placeholder}>
-        <Text style={styles.placeholderText}>Messages Coming Soon</Text>
-        <Text style={styles.placeholderSubtext}>
-          Direct messages and group chats will appear here.
-        </Text>
-      </View>
+      <ConversationsList />
     </SafeAreaView>
   );
 }
