@@ -272,6 +272,160 @@ async def get_current_user_profile(current_user = Depends(get_current_user)):
     return UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
 
 
+# Posts Routes
+@api_router.post("/posts", response_model=PostResponse)
+async def create_post(post_data: PostCreate, current_user = Depends(get_current_user)):
+    # Validate media count
+    if len(post_data.media) == 0:
+        raise HTTPException(status_code=400, detail="At least one media item is required")
+    
+    if len(post_data.media) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 media items allowed")
+    
+    # Create post
+    post_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_post = {
+        "id": post_id,
+        "authorId": current_user["id"],
+        "caption": post_data.caption,
+        "media": post_data.media,
+        "mediaTypes": post_data.mediaTypes,
+        "hashtags": post_data.hashtags or [],
+        "taggedUsers": post_data.taggedUsers or [],
+        "likes": [],
+        "likesCount": 0,
+        "commentsCount": 0,
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    await db.posts.insert_one(new_post)
+    
+    # Get author info for response
+    author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
+    
+    return PostResponse(
+        **new_post,
+        author=author,
+        comments=[]  # Will be loaded separately
+    )
+
+@api_router.get("/posts/feed", response_model=List[PostResponse])
+async def get_feed(current_user = Depends(get_current_user), skip: int = 0, limit: int = 20):
+    # Get posts with author info
+    posts = await db.posts.find().sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get all unique author IDs
+    author_ids = list(set(post["authorId"] for post in posts))
+    
+    # Get all authors in one query
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids))
+    authors_map = {author["id"]: author for author in authors}
+    
+    # Build response
+    result = []
+    for post in posts:
+        author_data = authors_map.get(post["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(PostResponse(
+                **post,
+                author=author,
+                comments=[]  # Will be loaded separately when needed
+            ))
+    
+    return result
+
+@api_router.post("/posts/{post_id}/like")
+async def toggle_post_like(post_id: str, current_user = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    user_id = current_user["id"]
+    likes = post.get("likes", [])
+    
+    if user_id in likes:
+        # Unlike
+        await db.posts.update_one(
+            {"id": post_id},
+            {
+                "$pull": {"likes": user_id},
+                "$inc": {"likesCount": -1}
+            }
+        )
+        liked = False
+    else:
+        # Like
+        await db.posts.update_one(
+            {"id": post_id},
+            {
+                "$addToSet": {"likes": user_id},
+                "$inc": {"likesCount": 1}
+            }
+        )
+        liked = True
+    
+    return {"liked": liked, "likesCount": post.get("likesCount", 0) + (1 if liked else -1)}
+
+@api_router.post("/posts/{post_id}/comments", response_model=CommentResponse)
+async def create_comment(post_id: str, comment_data: CommentCreate, current_user = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Create comment
+    comment_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_comment = {
+        "id": comment_id,
+        "postId": post_id,
+        "authorId": current_user["id"],
+        "text": comment_data.text,
+        "likes": [],
+        "likesCount": 0,
+        "createdAt": now
+    }
+    
+    await db.comments.insert_one(new_comment)
+    
+    # Update post comments count
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$inc": {"commentsCount": 1}}
+    )
+    
+    # Get author info for response
+    author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
+    
+    return CommentResponse(**new_comment, author=author)
+
+@api_router.get("/posts/{post_id}/comments", response_model=List[CommentResponse])
+async def get_post_comments(post_id: str, current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Get comments with author info
+    comments = await db.comments.find({"postId": post_id}).sort("createdAt", 1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get all unique author IDs
+    author_ids = list(set(comment["authorId"] for comment in comments))
+    
+    # Get all authors in one query
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids))
+    authors_map = {author["id"]: author for author in authors}
+    
+    # Build response
+    result = []
+    for comment in comments:
+        author_data = authors_map.get(comment["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(CommentResponse(**comment, author=author))
+    
+    return result
+
+
 # Original routes
 @api_router.get("/")
 async def root():
