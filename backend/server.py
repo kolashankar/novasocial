@@ -1278,6 +1278,80 @@ async def cleanup_expired_stories():
             await asyncio.sleep(300)  # Wait 5 minutes on error
 
 
+# User Posts endpoint
+@api_router.get("/users/{user_id}/posts", response_model=List[PostResponse])
+async def get_user_posts(user_id: str, skip: int = 0, limit: int = 20):
+    """Get posts by a specific user"""
+    try:
+        # Validate user exists
+        user = await db.users.find_one({"_id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get user's posts
+        posts = await db.posts.find(
+            {"authorId": user_id}
+        ).sort("createdAt", -1).skip(skip).limit(limit).to_list(length=limit)
+        
+        # Get authors info and format response
+        result = []
+        for post in posts:
+            author = await db.users.find_one({"_id": post["authorId"]})
+            if author:
+                author_response = UserResponse(
+                    id=str(author["_id"]),
+                    email=author["email"],
+                    username=author["username"],
+                    fullName=author["fullName"],
+                    profileImage=author.get("profileImage"),
+                    bio=author.get("bio"),
+                    createdAt=author["createdAt"]
+                )
+                
+                post_response = PostResponse(
+                    id=str(post["_id"]),
+                    authorId=post["authorId"],
+                    author=author_response,
+                    caption=post["caption"],
+                    media=post["media"],
+                    mediaTypes=post["mediaTypes"],
+                    hashtags=post.get("hashtags", []),
+                    taggedUsers=post.get("taggedUsers", []),
+                    likes=post.get("likes", []),
+                    likesCount=len(post.get("likes", [])),
+                    comments=[],  # Will be loaded separately if needed
+                    commentsCount=await db.comments.count_documents({"postId": str(post["_id"])}),
+                    createdAt=post["createdAt"]
+                )
+                result.append(post_response)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching user posts: {str(e)}")
+
+# User Stats endpoint
+@api_router.get("/users/{user_id}/stats")
+async def get_user_stats(user_id: str):
+    """Get user statistics (posts count, followers, following)"""
+    try:
+        # Validate user exists
+        user = await db.users.find_one({"_id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get counts
+        posts_count = await db.posts.count_documents({"authorId": user_id})
+        followers_count = await db.follows.count_documents({"following": user_id})
+        following_count = await db.follows.count_documents({"follower": user_id})
+        
+        return {
+            "postsCount": posts_count,
+            "followersCount": followers_count,
+            "followingCount": following_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching user stats: {str(e)}")
+
 # Original routes
 @api_router.get("/")
 async def root():
