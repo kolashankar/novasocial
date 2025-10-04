@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import uuid
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://socially-app.preview.emergentagent.com/api"
+BACKEND_URL = "https://mobile-social-app-1.preview.emergentagent.com/api"
 
 # Test users for messaging system
 TEST_USER_1 = {
