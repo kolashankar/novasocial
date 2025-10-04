@@ -828,6 +828,22 @@ async def toggle_post_like(post_id: str, current_user = Depends(get_current_user
             }
         )
         liked = True
+        
+        # Create notification if liking someone else's post
+        if post["authorId"] != user_id:
+            notification = {
+                "id": str(uuid.uuid4()),
+                "recipientId": post["authorId"],
+                "senderId": current_user["id"],
+                "type": "like",
+                "title": "Post Liked",
+                "message": f"{current_user['username']} liked your post",
+                "relatedId": post_id,
+                "relatedType": "post",
+                "isRead": False,
+                "createdAt": datetime.utcnow()
+            }
+            await db.notifications.insert_one(notification)
     
     return {"liked": liked, "likesCount": post.get("likesCount", 0) + (1 if liked else -1)}
 
