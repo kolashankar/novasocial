@@ -1,0 +1,105 @@
+diff --git a/backend/server.py b/backend/server.py
+index 3f5b607..15f7d0a 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+ from dotenv import load_dotenv
+ from starlette.middleware.cors import CORSMiddleware
+ from motor.motor_asyncio import AsyncIOMotorClient
+-from passlib.context import CryptContext
++import bcrypt
+ from jose import JWTError, jwt
+ from datetime import datetime, timedelta
+ import os
+@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, EmailStr
+ from typing import List, Optional
+ import uuid
+ import re
++import hashlib
++import base64
+ 
+ 
+ ROOT_DIR = Path(__file__).parent
+@@ -28,7 +30,6 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production"
+ ALGORITHM = "HS256"
+ ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 days
+ 
+-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ security = HTTPBearer()
+ 
+ # Create the main app without a prefix
+@@ -76,11 +77,20 @@ class StatusCheckCreate(BaseModel):
+ 
+ 
+ # Utility Functions
++def _pre_hash_password(password: str) -> bytes:
++    """Pre-hash password to avoid bcrypt 72-byte limit"""
++    hashed_pw = hashlib.sha256(password.encode('utf-8')).digest()
++    return base64.b64encode(hashed_pw)
++
+ def verify_password(plain_password: str, hashed_password: str) -> bool:
+-    return pwd_context.verify(plain_password, hashed_password)
++    pre_hashed = _pre_hash_password(plain_password)
++    return bcrypt.checkpw(pre_hashed, hashed_password.encode('utf-8'))
+ 
+ def get_password_hash(password: str) -> str:
+-    return pwd_context.hash(password)
++    pre_hashed = _pre_hash_password(password)
++    salt = bcrypt.gensalt()
++    hashed = bcrypt.hashpw(pre_hashed, salt)
++    return hashed.decode('utf-8')
+ 
+ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+     to_encode = data.copy()
+diff --git a/test_result.md b/test_result.md
+index 45e6f85..0e6716c 100644
+--- a/test_result.md
++++ b/test_result.md
+@@ -107,27 +107,33 @@ user_problem_statement: "Develop NovaSocial - Instagram-like mobile app with Rea
+ backend:
+   - task: "User Authentication System"
+     implemented: true
+-    working: "unknown"
++    working: true
+     file: "server.py"
+     stuck_count: 0
+     priority: "high"
+-    needs_retesting: true
++    needs_retesting: false
+     status_history:
+       - working: "unknown"
+         agent: "main"
+         comment: "Implemented JWT authentication, user registration, login, and profile update endpoints"
++      - working: true
++        agent: "testing"
++        comment: "COMPREHENSIVE TESTING COMPLETE - All authentication endpoints working perfectly. Fixed bcrypt 72-byte password limit issue by implementing pre-hashing with SHA-256. Tested: POST /api/auth/register (user registration with validation), POST /api/auth/login (JWT authentication), PUT /api/auth/profile (profile updates with auth), GET /api/auth/me (user profile retrieval). All validation working: username format (3-20 chars, alphanumeric+underscore), password strength (min 8 chars), duplicate email/username detection, JWT token security, unauthorized access protection. Database operations confirmed working with proper password hashing and user data structure."
+   
+   - task: "MongoDB User Schema"
+     implemented: true
+-    working: "unknown"
++    working: true
+     file: "server.py"
+     stuck_count: 0
+     priority: "high"
+-    needs_retesting: true
++    needs_retesting: false
+     status_history:
+       - working: "unknown"
+         agent: "main"
+         comment: "Created user models with profile image (base64), bio, email, username validation"
++      - working: true
++        agent: "testing"
++        comment: "DATABASE VALIDATION COMPLETE - User schema working correctly. Verified: user data properly stored in MongoDB, passwords securely hashed (not returned in API responses), username stored in lowercase as expected, all required fields present (id, email, username, fullName, createdAt), profile fields (profileImage, bio) working with base64 image support. Database connection stable and operations successful."
+ 
+ frontend:
+   - task: "Project Setup & 7-Level Folder Structure"
+@@ -208,4 +214,6 @@ test_plan:
+ 
+ agent_communication:
+   - agent: "main"
+-    message: "Phase 1 & 2 MVP implementation complete. Ready for backend testing of authentication endpoints, then frontend integration testing."
+\ No newline at end of file
++    message: "Phase 1 & 2 MVP implementation complete. Ready for backend testing of authentication endpoints, then frontend integration testing."
++  - agent: "testing"
++    message: "BACKEND AUTHENTICATION TESTING COMPLETE ✅ - All authentication endpoints working perfectly! Fixed critical bcrypt password hashing issue during testing. User Authentication System and MongoDB User Schema both fully functional. All validation, security, and database operations confirmed working. Backend ready for frontend integration. No critical issues found."
+\ No newline at end of file
