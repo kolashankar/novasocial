@@ -120,6 +120,69 @@ class StatusCheck(BaseModel):
 class StatusCheckCreate(BaseModel):
     client_name: str
 
+# Chat Models
+class ConversationCreate(BaseModel):
+    participantIds: List[str]
+    isGroup: bool = False
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class MessageCreate(BaseModel):
+    conversationId: str
+    text: Optional[str] = None
+    messageType: str = "text"  # "text", "image", "video", "emoji"
+    media: Optional[str] = None  # base64 encoded media
+    replyTo: Optional[str] = None  # Reply to message ID
+
+class MessageResponse(BaseModel):
+    id: str
+    conversationId: str
+    senderId: str
+    sender: UserResponse
+    text: Optional[str]
+    messageType: str
+    media: Optional[str]
+    replyTo: Optional[str]
+    readBy: List[dict]  # [{"userId": str, "readAt": datetime}]
+    createdAt: datetime
+    updatedAt: datetime
+
+class ConversationResponse(BaseModel):
+    id: str
+    participantIds: List[str]
+    participants: List[UserResponse]
+    isGroup: bool
+    name: Optional[str]
+    description: Optional[str]
+    lastMessage: Optional[MessageResponse]
+    unreadCount: int
+    createdAt: datetime
+    updatedAt: datetime
+
+# Stories Models
+class StoryCreate(BaseModel):
+    media: str  # base64 encoded image/video
+    mediaType: str  # "image" or "video"
+    text: Optional[str] = None
+    textPosition: Optional[dict] = None  # {"x": 0.5, "y": 0.3}
+    textStyle: Optional[dict] = None  # {"color": "#fff", "fontSize": 24}
+    duration: Optional[int] = 24  # hours
+
+class StoryResponse(BaseModel):
+    id: str
+    authorId: str
+    author: UserResponse
+    media: str
+    mediaType: str
+    text: Optional[str]
+    textPosition: Optional[dict]
+    textStyle: Optional[dict]
+    duration: int
+    viewers: List[str]  # User IDs who viewed
+    viewersCount: int
+    createdAt: datetime
+    expiresAt: datetime
+
 
 # Utility Functions
 def _pre_hash_password(password: str) -> bytes:
