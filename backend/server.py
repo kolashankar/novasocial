@@ -243,6 +243,101 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     
     return user
 
+# Socket.IO Events
+@sio.event
+async def connect(sid, environ):
+    print(f"Client {sid} connected")
+
+@sio.event
+async def disconnect(sid):
+    print(f"Client {sid} disconnected")
+
+@sio.event
+async def join_conversation(sid, data):
+    """Join a conversation room"""
+    conversation_id = data.get('conversationId')
+    if conversation_id:
+        await sio.enter_room(sid, f"conversation_{conversation_id}")
+        print(f"Client {sid} joined conversation {conversation_id}")
+
+@sio.event
+async def leave_conversation(sid, data):
+    """Leave a conversation room"""
+    conversation_id = data.get('conversationId')
+    if conversation_id:
+        await sio.leave_room(sid, f"conversation_{conversation_id}")
+        print(f"Client {sid} left conversation {conversation_id}")
+
+@sio.event
+async def send_message(sid, data):
+    """Handle real-time message sending"""
+    try:
+        conversation_id = data.get('conversationId')
+        message_data = data.get('message')
+        
+        if conversation_id and message_data:
+            # Emit to all clients in the conversation room
+            await sio.emit('new_message', {
+                'conversationId': conversation_id,
+                'message': message_data
+            }, room=f"conversation_{conversation_id}")
+            
+    except Exception as e:
+        print(f"Error sending message: {e}")
+
+@sio.event
+async def typing_start(sid, data):
+    """Handle typing indicator"""
+    conversation_id = data.get('conversationId')
+    user_id = data.get('userId')
+    if conversation_id and user_id:
+        await sio.emit('user_typing', {
+            'conversationId': conversation_id,
+            'userId': user_id,
+            'typing': True
+        }, room=f"conversation_{conversation_id}", skip_sid=sid)
+
+@sio.event
+async def typing_stop(sid, data):
+    """Handle stop typing"""
+    conversation_id = data.get('conversationId')
+    user_id = data.get('userId')
+    if conversation_id and user_id:
+        await sio.emit('user_typing', {
+            'conversationId': conversation_id,
+            'userId': user_id,
+            'typing': False
+        }, room=f"conversation_{conversation_id}", skip_sid=sid)
+
+@sio.event
+async def mark_read(sid, data):
+    """Mark messages as read"""
+    conversation_id = data.get('conversationId')
+    user_id = data.get('userId')
+    message_ids = data.get('messageIds', [])
+    
+    if conversation_id and user_id:
+        # Update read receipts in database
+        for message_id in message_ids:
+            await db.messages.update_one(
+                {"id": message_id, "conversationId": conversation_id},
+                {
+                    "$addToSet": {
+                        "readBy": {
+                            "userId": user_id,
+                            "readAt": datetime.utcnow()
+                        }
+                    }
+                }
+            )
+        
+        # Emit read receipt to other users
+        await sio.emit('messages_read', {
+            'conversationId': conversation_id,
+            'userId': user_id,
+            'messageIds': message_ids
+        }, room=f"conversation_{conversation_id}", skip_sid=sid)
+
 
 # Auth Routes
 @api_router.post("/auth/register", response_model=AuthResponse)
