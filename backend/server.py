@@ -1284,7 +1284,7 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 20):
     """Get posts by a specific user"""
     try:
         # Validate user exists
-        user = await db.users.find_one({"_id": user_id})
+        user = await db.users.find_one({"id": user_id})
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -1296,7 +1296,7 @@ async def get_user_posts(user_id: str, skip: int = 0, limit: int = 20):
         # Get authors info and format response
         result = []
         for post in posts:
-            author = await db.users.find_one({"_id": post["authorId"]})
+            author = await db.users.find_one({"id": post["authorId"]})
             if author:
                 author_response = UserResponse(
                     id=str(author["_id"]),
