@@ -77,6 +77,22 @@ class NovaSocialTester:
             self.auth_tokens[result["user"]["id"]] = result["token"]
             self.log(f"Created test user: {user_data['username']}")
             return result
+        elif response.status_code == 400 and "already" in response.text.lower():
+            # User already exists, try to login
+            login_data = {
+                "email": user_data["email"],
+                "password": user_data["password"]
+            }
+            login_response = self.make_request("POST", "/auth/login", login_data)
+            if login_response.status_code == 200:
+                result = login_response.json()
+                self.test_users.append(result["user"])
+                self.auth_tokens[result["user"]["id"]] = result["token"]
+                self.log(f"Logged in existing test user: {user_data['username']}")
+                return result
+            else:
+                self.log(f"Failed to login existing user {user_data['username']}: {login_response.status_code} - {login_response.text}", "ERROR")
+                raise Exception(f"User login failed: {login_response.text}")
         else:
             self.log(f"Failed to create user {user_data['username']}: {response.status_code} - {response.text}", "ERROR")
             raise Exception(f"User creation failed: {response.text}")
