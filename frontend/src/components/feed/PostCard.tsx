@@ -47,7 +47,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   onComment,
   onShare,
 }) => {
-  const { user, token } = useAuth();
+  const { user, token } = useAuthContext();
   const [isLiked, setIsLiked] = useState(post.likes.includes(user?.id || ''));
   const [likesCount, setLikesCount] = useState(post.likesCount);
   const [isLiking, setIsLiking] = useState(false);
