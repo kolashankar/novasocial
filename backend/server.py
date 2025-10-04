@@ -15,6 +15,9 @@ import uuid
 import re
 import hashlib
 import base64
+import socketio
+import asyncio
+from contextlib import asynccontextmanager
 
 
 ROOT_DIR = Path(__file__).parent
