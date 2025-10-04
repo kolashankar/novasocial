@@ -876,7 +876,219 @@ def run_comprehensive_tests():
         print("⚠️  SOME TESTS FAILED! Check the details above.")
         return False
 
+def test_phase8_endpoints():
+    """Test Phase 8 endpoints: user posts and user stats"""
+    print_test_header("PHASE 8 ENDPOINTS - USER POSTS & STATS")
+    
+    if not user1_token or not user2_token:
+        print_result("Phase 8 Endpoints", False, "Authentication tokens not available")
+        return False
+    
+    headers1 = {"Authorization": f"Bearer {user1_token}"}
+    headers2 = {"Authorization": f"Bearer {user2_token}"}
+    
+    # First, create some test posts for user1
+    test_posts_created = []
+    
+    # Create 3 test posts for user1
+    for i in range(3):
+        try:
+            post_data = {
+                "caption": f"Test post {i+1} by {user1_data['username']} - sharing amazing content! #test #phase8 #novasocial",
+                "media": [create_test_image_base64()],
+                "mediaTypes": ["image"],
+                "hashtags": ["test", "phase8", "novasocial"],
+                "taggedUsers": []
+            }
+            response = requests.post(f"{BACKEND_URL}/posts", json=post_data, headers=headers1)
+            
+            if response.status_code == 200 or response.status_code == 201:
+                post = response.json()
+                test_posts_created.append(post)
+                print_result(f"Create test post {i+1}", True, f"Post ID: {post.get('id')}")
+            else:
+                print_result(f"Create test post {i+1}", False, f"Status: {response.status_code}, Response: {response.text}")
+        except Exception as e:
+            print_result(f"Create test post {i+1}", False, f"Exception: {str(e)}")
+    
+    # Create follow relationship for stats testing
+    try:
+        response = requests.post(f"{BACKEND_URL}/users/{user2_data['id']}/follow", headers=headers1)
+        if response.status_code == 200:
+            print_result("Create follow relationship", True, f"{user1_data['username']} follows {user2_data['username']}")
+        else:
+            print_result("Create follow relationship", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_result("Create follow relationship", False, f"Exception: {str(e)}")
+    
+    # Test 1: GET /api/users/{user_id}/posts - Get posts by specific user
+    try:
+        user_id = user1_data["id"]
+        response = requests.get(f"{BACKEND_URL}/users/{user_id}/posts")
+        
+        if response.status_code == 200:
+            posts = response.json()
+            print_result("GET /api/users/{user_id}/posts - Get user posts", True, f"Retrieved {len(posts)} posts")
+            
+            # Validate response structure
+            if posts:
+                post = posts[0]
+                required_fields = ["id", "authorId", "author", "caption", "media", "mediaTypes", "createdAt"]
+                missing_fields = [field for field in required_fields if field not in post]
+                
+                if missing_fields:
+                    print_result("User posts response validation", False, f"Missing fields: {missing_fields}")
+                else:
+                    print_result("User posts response validation", True, "All required fields present")
+                    
+                # Check if posts are in descending order (newest first)
+                if len(posts) > 1:
+                    first_time = posts[0]["createdAt"]
+                    second_time = posts[1]["createdAt"]
+                    if first_time >= second_time:
+                        print_result("User posts ordering", True, "Posts correctly ordered (newest first)")
+                    else:
+                        print_result("User posts ordering", False, "Posts not properly ordered")
+                        
+                # Validate author information
+                author = post["author"]
+                author_fields = ["id", "username", "fullName", "email"]
+                missing_author_fields = [field for field in author_fields if field not in author]
+                
+                if missing_author_fields:
+                    print_result("User posts author info", False, f"Missing author fields: {missing_author_fields}")
+                else:
+                    print_result("User posts author info", True, "Author information complete")
+            else:
+                print_result("User posts content", False, "No posts returned despite creating test posts")
+        else:
+            print_result("GET /api/users/{user_id}/posts - Get user posts", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("GET /api/users/{user_id}/posts - Get user posts", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 2: GET /api/users/{user_id}/posts with non-existent user
+    try:
+        fake_user_id = str(uuid.uuid4())
+        response = requests.get(f"{BACKEND_URL}/users/{fake_user_id}/posts")
+        
+        if response.status_code == 404:
+            print_result("GET /api/users/{user_id}/posts - Non-existent user", True, "Correctly returns 404")
+        else:
+            print_result("GET /api/users/{user_id}/posts - Non-existent user", False, f"Expected 404, got {response.status_code}")
+    except Exception as e:
+        print_result("GET /api/users/{user_id}/posts - Non-existent user", False, f"Exception: {str(e)}")
+    
+    # Test 3: GET /api/users/{user_id}/stats - Get user statistics
+    try:
+        user_id = user1_data["id"]
+        response = requests.get(f"{BACKEND_URL}/users/{user_id}/stats")
+        
+        if response.status_code == 200:
+            stats = response.json()
+            print_result("GET /api/users/{user_id}/stats - Get user stats", True, f"Stats: {stats}")
+            
+            # Validate response structure
+            required_fields = ["postsCount", "followersCount", "followingCount"]
+            missing_fields = [field for field in required_fields if field not in stats]
+            
+            if missing_fields:
+                print_result("User stats response validation", False, f"Missing fields: {missing_fields}")
+            else:
+                print_result("User stats response validation", True, "All required fields present")
+                
+            # Validate data types and values
+            for field in required_fields:
+                if not isinstance(stats[field], int):
+                    print_result(f"User stats {field} type", False, f"Expected int, got {type(stats[field])}")
+                elif stats[field] < 0:
+                    print_result(f"User stats {field} value", False, f"Negative value: {stats[field]}")
+                else:
+                    print_result(f"User stats {field} validation", True, f"Valid value: {stats[field]}")
+                    
+            # Check if stats make sense based on our test data
+            if stats["postsCount"] >= len(test_posts_created):
+                print_result("User stats posts count accuracy", True, f"Posts count {stats['postsCount']} >= created posts {len(test_posts_created)}")
+            else:
+                print_result("User stats posts count accuracy", False, f"Posts count {stats['postsCount']} < created posts {len(test_posts_created)}")
+                
+        else:
+            print_result("GET /api/users/{user_id}/stats - Get user stats", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        print_result("GET /api/users/{user_id}/stats - Get user stats", False, f"Exception: {str(e)}")
+        return False
+    
+    # Test 4: GET /api/users/{user_id}/stats with non-existent user
+    try:
+        fake_user_id = str(uuid.uuid4())
+        response = requests.get(f"{BACKEND_URL}/users/{fake_user_id}/stats")
+        
+        if response.status_code == 404:
+            print_result("GET /api/users/{user_id}/stats - Non-existent user", True, "Correctly returns 404")
+        else:
+            print_result("GET /api/users/{user_id}/stats - Non-existent user", False, f"Expected 404, got {response.status_code}")
+    except Exception as e:
+        print_result("GET /api/users/{user_id}/stats - Non-existent user", False, f"Exception: {str(e)}")
+    
+    # Test 5: Test with authentication (should work with or without auth for these public endpoints)
+    try:
+        user_id = user1_data["id"]
+        response = requests.get(f"{BACKEND_URL}/users/{user_id}/posts", headers=headers2)
+        
+        if response.status_code == 200:
+            print_result("User posts with authentication", True, "Endpoints work with valid auth token")
+        else:
+            print_result("User posts with authentication", False, f"Failed with auth token: {response.status_code}")
+    except Exception as e:
+        print_result("User posts with authentication", False, f"Exception: {str(e)}")
+    
+    return True
+
+def run_comprehensive_tests():
+    """Run all backend tests including messaging, stories, and Phase 8 endpoints"""
+    print("🚀 Starting NovaSocial Backend Comprehensive API Tests")
+    print(f"Backend URL: {BACKEND_URL}")
+    print(f"Test started at: {datetime.now()}")
+    
+    test_results = {
+        "authentication": False,
+        "messaging": False,
+        "stories": False,
+        "error_handling": False,
+        "phase8_endpoints": False
+    }
+    
+    # Run tests in sequence
+    test_results["authentication"] = test_user_authentication()
+    
+    if test_results["authentication"]:
+        test_results["messaging"] = test_messaging_system()
+        test_results["stories"] = test_stories_system()
+        test_results["error_handling"] = test_error_handling()
+        test_results["phase8_endpoints"] = test_phase8_endpoints()
+    
+    # Print final summary
+    print_test_header("FINAL TEST SUMMARY")
+    
+    total_tests = len(test_results)
+    passed_tests = sum(1 for result in test_results.values() if result is True)
+    
+    for test_name, result in test_results.items():
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status} - {test_name.upper()}")
+    
+    print(f"\n📊 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
+    
+    if passed_tests == total_tests:
+        print("🎉 ALL TESTS PASSED! Backend is working correctly.")
+        return True
+    else:
+        print("⚠️  SOME TESTS FAILED! Check the details above.")
+        return False
+
 if __name__ == "__main__":
-    # Run comprehensive tests for messaging and stories
+    # Run comprehensive tests for messaging, stories, and Phase 8 endpoints
     success = run_comprehensive_tests()
     exit(0 if success else 1)
