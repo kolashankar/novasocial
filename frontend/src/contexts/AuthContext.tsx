@@ -190,3 +190,6 @@ export const useAuth = () => {
   }
   return context;
 };
+
+// Export as useAuthContext for backward compatibility
+export const useAuthContext = useAuth;
