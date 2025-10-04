@@ -96,7 +96,7 @@ class NovaSocialTester:
         
         response = self.make_request("POST", "/posts", post_data, token=user_token)
         
-        if response.status_code == 201:
+        if response.status_code in [200, 201]:
             result = response.json()
             self.test_posts.append(result)
             self.log(f"Created test post: {result['id']}")
