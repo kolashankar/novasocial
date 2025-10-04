@@ -42,7 +42,7 @@ export default function Home() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   
-  const { token, user } = useAuth();
+  const { token, user } = useAuthContext();
 
   const fetchPosts = useCallback(async (refresh = false) => {
     if (!token || (isLoading && !refresh)) return;
