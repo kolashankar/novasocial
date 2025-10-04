@@ -1335,14 +1335,14 @@ async def get_user_stats(user_id: str):
     """Get user statistics (posts count, followers, following)"""
     try:
         # Validate user exists
-        user = await db.users.find_one({"_id": user_id})
+        user = await db.users.find_one({"id": user_id})
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
         # Get counts
         posts_count = await db.posts.count_documents({"authorId": user_id})
-        followers_count = await db.follows.count_documents({"following": user_id})
-        following_count = await db.follows.count_documents({"follower": user_id})
+        followers_count = await db.follows.count_documents({"followingId": user_id})
+        following_count = await db.follows.count_documents({"followerId": user_id})
         
         return {
             "postsCount": posts_count,
