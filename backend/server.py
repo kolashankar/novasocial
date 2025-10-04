@@ -78,11 +78,18 @@ class StatusCheckCreate(BaseModel):
 
 
 # Utility Functions
+def _pre_hash_password(password: str) -> bytes:
+    """Pre-hash password to avoid bcrypt 72-byte limit"""
+    hashed_pw = hashlib.sha256(password.encode('utf-8')).digest()
+    return base64.b64encode(hashed_pw)
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    pre_hashed = _pre_hash_password(plain_password)
+    return pwd_context.verify(pre_hashed.decode('utf-8'), hashed_password)
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    pre_hashed = _pre_hash_password(password)
+    return pwd_context.hash(pre_hashed.decode('utf-8'))
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
