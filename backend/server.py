@@ -189,6 +189,41 @@ class StoryResponse(BaseModel):
     createdAt: datetime
     expiresAt: datetime
 
+# Notification Models
+class NotificationCreate(BaseModel):
+    recipientId: str
+    type: str  # "like", "comment", "follow", "mention"
+    title: str
+    message: str
+    relatedId: Optional[str] = None  # Post/Comment/User ID
+    relatedType: Optional[str] = None  # "post", "comment", "user"
+
+class NotificationResponse(BaseModel):
+    id: str
+    recipientId: str
+    senderId: Optional[str]
+    sender: Optional[UserResponse]
+    type: str
+    title: str
+    message: str
+    relatedId: Optional[str]
+    relatedType: Optional[str]
+    isRead: bool
+    createdAt: datetime
+
+# Search Models
+class FollowRequest(BaseModel):
+    targetUserId: str
+
+class SearchQuery(BaseModel):
+    query: str
+    type: Optional[str] = "all"  # "users", "posts", "hashtags", "all"
+
+class SearchResponse(BaseModel):
+    users: List[UserResponse]
+    posts: List[PostResponse]
+    hashtags: List[str]
+
 
 # Utility Functions
 def _pre_hash_password(password: str) -> bytes:
@@ -338,300 +373,6 @@ async def mark_read(sid, data):
             'messageIds': message_ids
         }, room=f"conversation_{conversation_id}", skip_sid=sid)
 
-
-# Chat Routes
-@api_router.post("/conversations", response_model=ConversationResponse)
-async def create_conversation(conversation_data: ConversationCreate, current_user = Depends(get_current_user)):
-    # Validate participants
-    if current_user["id"] not in conversation_data.participantIds:
-        conversation_data.participantIds.append(current_user["id"])
-    
-    # Check if conversation already exists between these users (for non-group chats)
-    if not conversation_data.isGroup and len(conversation_data.participantIds) == 2:
-        existing = await db.conversations.find_one({
-            "participantIds": {"$all": conversation_data.participantIds, "$size": 2},
-            "isGroup": False
-        })
-        if existing:
-            # Return existing conversation
-            participants = await db.users.find({"id": {"$in": existing["participantIds"]}}).to_list(len(existing["participantIds"]))
-            participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
-            
-            return ConversationResponse(
-                **existing,
-                participants=participants_response,
-                lastMessage=None,
-                unreadCount=0
-            )
-    
-    # Create new conversation
-    conversation_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-    
-    new_conversation = {
-        "id": conversation_id,
-        "participantIds": conversation_data.participantIds,
-        "isGroup": conversation_data.isGroup,
-        "name": conversation_data.name,
-        "description": conversation_data.description,
-        "createdAt": now,
-        "updatedAt": now
-    }
-    
-    await db.conversations.insert_one(new_conversation)
-    
-    # Get participants info
-    participants = await db.users.find({"id": {"$in": conversation_data.participantIds}}).to_list(len(conversation_data.participantIds))
-    participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
-    
-    return ConversationResponse(
-        **new_conversation,
-        participants=participants_response,
-        lastMessage=None,
-        unreadCount=0
-    )
-
-@api_router.get("/conversations", response_model=List[ConversationResponse])
-async def get_conversations(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
-    # Get user's conversations
-    conversations = await db.conversations.find({
-        "participantIds": current_user["id"]
-    }).sort("updatedAt", -1).skip(skip).limit(limit).to_list(limit)
-    
-    result = []
-    for conv in conversations:
-        # Get participants
-        participants = await db.users.find({"id": {"$in": conv["participantIds"]}}).to_list(len(conv["participantIds"]))
-        participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
-        
-        # Get last message
-        last_message = await db.messages.find_one(
-            {"conversationId": conv["id"]},
-            sort=[("createdAt", -1)]
-        )
-        
-        last_message_response = None
-        if last_message:
-            sender = await db.users.find_one({"id": last_message["senderId"]})
-            if sender:
-                sender_response = UserResponse(**{k: v for k, v in sender.items() if k != "password"})
-                last_message_response = MessageResponse(**last_message, sender=sender_response)
-        
-        # Calculate unread count
-        unread_count = await db.messages.count_documents({
-            "conversationId": conv["id"],
-            "senderId": {"$ne": current_user["id"]},
-            "readBy.userId": {"$ne": current_user["id"]}
-        })
-        
-        result.append(ConversationResponse(
-            **conv,
-            participants=participants_response,
-            lastMessage=last_message_response,
-            unreadCount=unread_count
-        ))
-    
-    return result
-
-@api_router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
-async def send_message(conversation_id: str, message_data: MessageCreate, current_user = Depends(get_current_user)):
-    # Validate conversation exists and user is participant
-    conversation = await db.conversations.find_one({
-        "id": conversation_id,
-        "participantIds": current_user["id"]
-    })
-    
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found or access denied")
-    
-    # Create message
-    message_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-    
-    new_message = {
-        "id": message_id,
-        "conversationId": conversation_id,
-        "senderId": current_user["id"],
-        "text": message_data.text,
-        "messageType": message_data.messageType,
-        "media": message_data.media,
-        "replyTo": message_data.replyTo,
-        "readBy": [{
-            "userId": current_user["id"],
-            "readAt": now
-        }],
-        "createdAt": now,
-        "updatedAt": now
-    }
-    
-    await db.messages.insert_one(new_message)
-    
-    # Update conversation's last activity
-    await db.conversations.update_one(
-        {"id": conversation_id},
-        {"$set": {"updatedAt": now}}
-    )
-    
-    # Get sender info for response
-    sender = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
-    
-    message_response = MessageResponse(**new_message, sender=sender)
-    
-    # Emit real-time message via Socket.IO
-    await sio.emit('new_message', {
-        'conversationId': conversation_id,
-        'message': message_response.dict()
-    }, room=f"conversation_{conversation_id}")
-    
-    return message_response
-
-@api_router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
-async def get_messages(conversation_id: str, current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
-    # Validate conversation access
-    conversation = await db.conversations.find_one({
-        "id": conversation_id,
-        "participantIds": current_user["id"]
-    })
-    
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found or access denied")
-    
-    # Get messages
-    messages = await db.messages.find({
-        "conversationId": conversation_id
-    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
-    
-    # Get all unique sender IDs
-    sender_ids = list(set(msg["senderId"] for msg in messages))
-    
-    # Get all senders in one query
-    senders = await db.users.find({"id": {"$in": sender_ids}}).to_list(len(sender_ids))
-    senders_map = {sender["id"]: sender for sender in senders}
-    
-    # Build response
-    result = []
-    for message in reversed(messages):  # Reverse to show oldest first
-        sender_data = senders_map.get(message["senderId"])
-        if sender_data:
-            sender = UserResponse(**{k: v for k, v in sender_data.items() if k != "password"})
-            result.append(MessageResponse(**message, sender=sender))
-    
-    return result
-
-# Stories Routes
-@api_router.post("/stories", response_model=StoryResponse)
-async def create_story(story_data: StoryCreate, current_user = Depends(get_current_user)):
-    # Calculate expiry time
-    expire_hours = story_data.duration or 24
-    expires_at = datetime.utcnow() + timedelta(hours=expire_hours)
-    
-    # Create story
-    story_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-    
-    new_story = {
-        "id": story_id,
-        "authorId": current_user["id"],
-        "media": story_data.media,
-        "mediaType": story_data.mediaType,
-        "text": story_data.text,
-        "textPosition": story_data.textPosition,
-        "textStyle": story_data.textStyle,
-        "duration": expire_hours,
-        "viewers": [],
-        "viewersCount": 0,
-        "createdAt": now,
-        "expiresAt": expires_at
-    }
-    
-    await db.stories.insert_one(new_story)
-    
-    # Get author info for response
-    author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
-    
-    return StoryResponse(**new_story, author=author)
-
-@api_router.get("/stories/feed", response_model=List[StoryResponse])
-async def get_stories_feed(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
-    # Get active stories (not expired)
-    now = datetime.utcnow()
-    stories = await db.stories.find({
-        "expiresAt": {"$gt": now}
-    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
-    
-    # Get all unique author IDs
-    author_ids = list(set(story["authorId"] for story in stories))
-    
-    # Get all authors in one query
-    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids))
-    authors_map = {author["id"]: author for author in authors}
-    
-    # Build response
-    result = []
-    for story in stories:
-        author_data = authors_map.get(story["authorId"])
-        if author_data:
-            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
-            result.append(StoryResponse(**story, author=author))
-    
-    return result
-
-@api_router.post("/stories/{story_id}/view")
-async def view_story(story_id: str, current_user = Depends(get_current_user)):
-    # Check if story exists and is not expired
-    now = datetime.utcnow()
-    story = await db.stories.find_one({
-        "id": story_id,
-        "expiresAt": {"$gt": now}
-    })
-    
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found or expired")
-    
-    # Add viewer if not already viewed
-    if current_user["id"] not in story.get("viewers", []):
-        await db.stories.update_one(
-            {"id": story_id},
-            {
-                "$addToSet": {"viewers": current_user["id"]},
-                "$inc": {"viewersCount": 1}
-            }
-        )
-    
-    return {"viewed": True}
-
-@api_router.delete("/stories/{story_id}")
-async def delete_story(story_id: str, current_user = Depends(get_current_user)):
-    # Check if story exists and belongs to user
-    story = await db.stories.find_one({
-        "id": story_id,
-        "authorId": current_user["id"]
-    })
-    
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found or access denied")
-    
-    await db.stories.delete_one({"id": story_id})
-    return {"deleted": True}
-
-# Background task to clean expired stories
-async def cleanup_expired_stories():
-    """Background task to remove expired stories"""
-    while True:
-        try:
-            now = datetime.utcnow()
-            result = await db.stories.delete_many({"expiresAt": {"$lt": now}})
-            if result.deleted_count > 0:
-                print(f"Cleaned up {result.deleted_count} expired stories")
-            await asyncio.sleep(3600)  # Run every hour
-        except Exception as e:
-            print(f"Error cleaning up stories: {e}")
-            await asyncio.sleep(300)  # Wait 5 minutes on error
-
-# Start cleanup task
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(cleanup_expired_stories())
 
 # Auth Routes
 @api_router.post("/auth/register", response_model=AuthResponse)
@@ -875,22 +616,6 @@ async def create_comment(post_id: str, comment_data: CommentCreate, current_user
         {"$inc": {"commentsCount": 1}}
     )
     
-    # Create notification if commenting on someone else's post
-    if post["authorId"] != current_user["id"]:
-        notification = {
-            "id": str(uuid.uuid4()),
-            "recipientId": post["authorId"],
-            "senderId": current_user["id"],
-            "type": "comment",
-            "title": "New Comment",
-            "message": f"{current_user['username']} commented on your post",
-            "relatedId": post_id,
-            "relatedType": "post",
-            "isRead": False,
-            "createdAt": now
-        }
-        await db.notifications.insert_one(notification)
-    
     # Get author info for response
     author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
     
@@ -918,42 +643,333 @@ async def get_post_comments(post_id: str, current_user = Depends(get_current_use
     
     return result
 
+@api_router.post("/comments/{comment_id}/like")
+async def toggle_comment_like(comment_id: str, current_user = Depends(get_current_user)):
+    comment = await db.comments.find_one({"id": comment_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    user_id = current_user["id"]
+    likes = comment.get("likes", [])
+    
+    if user_id in likes:
+        # Unlike
+        await db.comments.update_one(
+            {"id": comment_id},
+            {
+                "$pull": {"likes": user_id},
+                "$inc": {"likesCount": -1}
+            }
+        )
+        liked = False
+    else:
+        # Like
+        await db.comments.update_one(
+            {"id": comment_id},
+            {
+                "$addToSet": {"likes": user_id},
+                "$inc": {"likesCount": 1}
+            }
+        )
+        liked = True
+        
+        # Create notification if liking someone else's comment
+        if comment["authorId"] != user_id:
+            notification = {
+                "id": str(uuid.uuid4()),
+                "recipientId": comment["authorId"],
+                "senderId": current_user["id"],
+                "type": "like",
+                "title": "Comment Liked",
+                "message": f"{current_user['username']} liked your comment",
+                "relatedId": comment_id,
+                "relatedType": "comment",
+                "isRead": False,
+                "createdAt": datetime.utcnow()
+            }
+            await db.notifications.insert_one(notification)
+    
+    return {"liked": liked, "likesCount": comment.get("likesCount", 0) + (1 if liked else -1)}
 
-# Phase 6 - Engagement Features Models
-class NotificationCreate(BaseModel):
-    recipientId: str
-    type: str  # "like", "comment", "follow", "mention"
-    title: str
-    message: str
-    relatedId: Optional[str] = None  # Post/Comment/User ID
-    relatedType: Optional[str] = None  # "post", "comment", "user"
 
-class NotificationResponse(BaseModel):
-    id: str
-    recipientId: str
-    senderId: Optional[str]
-    sender: Optional[UserResponse]
-    type: str
-    title: str
-    message: str
-    relatedId: Optional[str]
-    relatedType: Optional[str]
-    isRead: bool
-    createdAt: datetime
+# Chat Routes
+@api_router.post("/conversations", response_model=ConversationResponse)
+async def create_conversation(conversation_data: ConversationCreate, current_user = Depends(get_current_user)):
+    # Validate participants
+    if current_user["id"] not in conversation_data.participantIds:
+        conversation_data.participantIds.append(current_user["id"])
+    
+    # Check if conversation already exists between these users (for non-group chats)
+    if not conversation_data.isGroup and len(conversation_data.participantIds) == 2:
+        existing = await db.conversations.find_one({
+            "participantIds": {"$all": conversation_data.participantIds, "$size": 2},
+            "isGroup": False
+        })
+        if existing:
+            # Return existing conversation
+            participants = await db.users.find({"id": {"$in": existing["participantIds"]}}).to_list(len(existing["participantIds"]))
+            participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
+            
+            return ConversationResponse(
+                **existing,
+                participants=participants_response,
+                lastMessage=None,
+                unreadCount=0
+            )
+    
+    # Create new conversation
+    conversation_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_conversation = {
+        "id": conversation_id,
+        "participantIds": conversation_data.participantIds,
+        "isGroup": conversation_data.isGroup,
+        "name": conversation_data.name,
+        "description": conversation_data.description,
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    await db.conversations.insert_one(new_conversation)
+    
+    # Get participants info
+    participants = await db.users.find({"id": {"$in": conversation_data.participantIds}}).to_list(len(conversation_data.participantIds))
+    participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
+    
+    return ConversationResponse(
+        **new_conversation,
+        participants=participants_response,
+        lastMessage=None,
+        unreadCount=0
+    )
 
-class FollowRequest(BaseModel):
-    targetUserId: str
+@api_router.get("/conversations", response_model=List[ConversationResponse])
+async def get_conversations(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Get user's conversations
+    conversations = await db.conversations.find({
+        "participantIds": current_user["id"]
+    }).sort("updatedAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    result = []
+    for conv in conversations:
+        # Get participants
+        participants = await db.users.find({"id": {"$in": conv["participantIds"]}}).to_list(len(conv["participantIds"]))
+        participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
+        
+        # Get last message
+        last_message = await db.messages.find_one(
+            {"conversationId": conv["id"]},
+            sort=[("createdAt", -1)]
+        )
+        
+        last_message_response = None
+        if last_message:
+            sender = await db.users.find_one({"id": last_message["senderId"]})
+            if sender:
+                sender_response = UserResponse(**{k: v for k, v in sender.items() if k != "password"})
+                last_message_response = MessageResponse(**last_message, sender=sender_response)
+        
+        # Calculate unread count
+        unread_count = await db.messages.count_documents({
+            "conversationId": conv["id"],
+            "senderId": {"$ne": current_user["id"]},
+            "readBy.userId": {"$ne": current_user["id"]}
+        })
+        
+        result.append(ConversationResponse(
+            **conv,
+            participants=participants_response,
+            lastMessage=last_message_response,
+            unreadCount=unread_count
+        ))
+    
+    return result
 
-class SearchQuery(BaseModel):
-    query: str
-    type: Optional[str] = "all"  # "users", "posts", "hashtags", "all"
+@api_router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
+async def send_message(conversation_id: str, message_data: MessageCreate, current_user = Depends(get_current_user)):
+    # Validate conversation exists and user is participant
+    conversation = await db.conversations.find_one({
+        "id": conversation_id,
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found or access denied")
+    
+    # Create message
+    message_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_message = {
+        "id": message_id,
+        "conversationId": conversation_id,
+        "senderId": current_user["id"],
+        "text": message_data.text,
+        "messageType": message_data.messageType,
+        "media": message_data.media,
+        "replyTo": message_data.replyTo,
+        "readBy": [{
+            "userId": current_user["id"],
+            "readAt": now
+        }],
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    await db.messages.insert_one(new_message)
+    
+    # Update conversation's last activity
+    await db.conversations.update_one(
+        {"id": conversation_id},
+        {"$set": {"updatedAt": now}}
+    )
+    
+    # Get sender info for response
+    sender = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
+    
+    message_response = MessageResponse(**new_message, sender=sender)
+    
+    # Emit real-time message via Socket.IO
+    await sio.emit('new_message', {
+        'conversationId': conversation_id,
+        'message': message_response.dict()
+    }, room=f"conversation_{conversation_id}")
+    
+    return message_response
 
-class SearchResponse(BaseModel):
-    users: List[UserResponse]
-    posts: List[PostResponse]
-    hashtags: List[str]
+@api_router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
+async def get_messages(conversation_id: str, current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Validate conversation access
+    conversation = await db.conversations.find_one({
+        "id": conversation_id,
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found or access denied")
+    
+    # Get messages
+    messages = await db.messages.find({
+        "conversationId": conversation_id
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get all unique sender IDs
+    sender_ids = list(set(msg["senderId"] for msg in messages))
+    
+    # Get all senders in one query
+    senders = await db.users.find({"id": {"$in": sender_ids}}).to_list(len(sender_ids))
+    senders_map = {sender["id"]: sender for sender in senders}
+    
+    # Build response
+    result = []
+    for message in reversed(messages):  # Reverse to show oldest first
+        sender_data = senders_map.get(message["senderId"])
+        if sender_data:
+            sender = UserResponse(**{k: v for k, v in sender_data.items() if k != "password"})
+            result.append(MessageResponse(**message, sender=sender))
+    
+    return result
 
-# Phase 6 - Engagement Routes
+
+# Stories Routes
+@api_router.post("/stories", response_model=StoryResponse)
+async def create_story(story_data: StoryCreate, current_user = Depends(get_current_user)):
+    # Calculate expiry time
+    expire_hours = story_data.duration or 24
+    expires_at = datetime.utcnow() + timedelta(hours=expire_hours)
+    
+    # Create story
+    story_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_story = {
+        "id": story_id,
+        "authorId": current_user["id"],
+        "media": story_data.media,
+        "mediaType": story_data.mediaType,
+        "text": story_data.text,
+        "textPosition": story_data.textPosition,
+        "textStyle": story_data.textStyle,
+        "duration": expire_hours,
+        "viewers": [],
+        "viewersCount": 0,
+        "createdAt": now,
+        "expiresAt": expires_at
+    }
+    
+    await db.stories.insert_one(new_story)
+    
+    # Get author info for response
+    author = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
+    
+    return StoryResponse(**new_story, author=author)
+
+@api_router.get("/stories/feed", response_model=List[StoryResponse])
+async def get_stories_feed(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    # Get active stories (not expired)
+    now = datetime.utcnow()
+    stories = await db.stories.find({
+        "expiresAt": {"$gt": now}
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get all unique author IDs
+    author_ids = list(set(story["authorId"] for story in stories))
+    
+    # Get all authors in one query
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids))
+    authors_map = {author["id"]: author for author in authors}
+    
+    # Build response
+    result = []
+    for story in stories:
+        author_data = authors_map.get(story["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(StoryResponse(**story, author=author))
+    
+    return result
+
+@api_router.post("/stories/{story_id}/view")
+async def view_story(story_id: str, current_user = Depends(get_current_user)):
+    # Check if story exists and is not expired
+    now = datetime.utcnow()
+    story = await db.stories.find_one({
+        "id": story_id,
+        "expiresAt": {"$gt": now}
+    })
+    
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found or expired")
+    
+    # Add viewer if not already viewed
+    if current_user["id"] not in story.get("viewers", []):
+        await db.stories.update_one(
+            {"id": story_id},
+            {
+                "$addToSet": {"viewers": current_user["id"]},
+                "$inc": {"viewersCount": 1}
+            }
+        )
+    
+    return {"viewed": True}
+
+@api_router.delete("/stories/{story_id}")
+async def delete_story(story_id: str, current_user = Depends(get_current_user)):
+    # Check if story exists and belongs to user
+    story = await db.stories.find_one({
+        "id": story_id,
+        "authorId": current_user["id"]
+    })
+    
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found or access denied")
+    
+    await db.stories.delete_one({"id": story_id})
+    return {"deleted": True}
+
+
+# Engagement Routes - Follow/Unfollow
 @api_router.post("/users/{user_id}/follow")
 async def follow_user(user_id: str, current_user = Depends(get_current_user)):
     if user_id == current_user["id"]:
@@ -1042,53 +1058,6 @@ async def get_user_following(user_id: str, current_user = Depends(get_current_us
     following = await db.users.find({"id": {"$in": following_ids}}).to_list(len(following_ids))
     return [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in following]
 
-@api_router.post("/comments/{comment_id}/like")
-async def toggle_comment_like(comment_id: str, current_user = Depends(get_current_user)):
-    comment = await db.comments.find_one({"id": comment_id})
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
-    
-    user_id = current_user["id"]
-    likes = comment.get("likes", [])
-    
-    if user_id in likes:
-        # Unlike
-        await db.comments.update_one(
-            {"id": comment_id},
-            {
-                "$pull": {"likes": user_id},
-                "$inc": {"likesCount": -1}
-            }
-        )
-        liked = False
-    else:
-        # Like
-        await db.comments.update_one(
-            {"id": comment_id},
-            {
-                "$addToSet": {"likes": user_id},
-                "$inc": {"likesCount": 1}
-            }
-        )
-        liked = True
-        
-        # Create notification if liking someone else's comment
-        if comment["authorId"] != user_id:
-            notification = {
-                "id": str(uuid.uuid4()),
-                "recipientId": comment["authorId"],
-                "senderId": current_user["id"],
-                "type": "like",
-                "title": "Comment Liked",
-                "message": f"{current_user['username']} liked your comment",
-                "relatedId": comment_id,
-                "relatedType": "comment",
-                "isRead": False,
-                "createdAt": datetime.utcnow()
-            }
-            await db.notifications.insert_one(notification)
-    
-    return {"liked": liked, "likesCount": comment.get("likesCount", 0) + (1 if liked else -1)}
 
 # Notifications Routes
 @api_router.get("/notifications", response_model=List[NotificationResponse])
@@ -1139,7 +1108,8 @@ async def mark_all_notifications_read(current_user = Depends(get_current_user)):
     
     return {"allRead": True}
 
-# Phase 7 - Search and Discovery Routes
+
+# Search and Discovery Routes
 @api_router.get("/search", response_model=SearchResponse)
 async def search(q: str, type: str = "all", current_user = Depends(get_current_user), limit: int = 20):
     users = []
@@ -1292,6 +1262,22 @@ async def get_user_suggestions(current_user = Depends(get_current_user), limit: 
     
     return [UserResponse(**{k: v for k, v in user.items() if k not in ["password", "followers"]}) for user in suggested_users]
 
+
+# Background task to clean expired stories
+async def cleanup_expired_stories():
+    """Background task to remove expired stories"""
+    while True:
+        try:
+            now = datetime.utcnow()
+            result = await db.stories.delete_many({"expiresAt": {"$lt": now}})
+            if result.deleted_count > 0:
+                print(f"Cleaned up {result.deleted_count} expired stories")
+            await asyncio.sleep(3600)  # Run every hour
+        except Exception as e:
+            print(f"Error cleaning up stories: {e}")
+            await asyncio.sleep(300)  # Wait 5 minutes on error
+
+
 # Original routes
 @api_router.get("/")
 async def root():
@@ -1308,6 +1294,12 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
+
+
+# Start cleanup task and include router
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(cleanup_expired_stories())
 
 # Include the router in the main app
 app.include_router(api_router)
