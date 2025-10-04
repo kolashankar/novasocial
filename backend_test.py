@@ -6,19 +6,20 @@ Comprehensive testing for Follow System, Notifications, Search & Discovery, and 
 
 import requests
 import json
-import base64
 import time
-from datetime import datetime, timedelta
 import uuid
+from datetime import datetime
+from typing import Dict, List, Optional
 
-# Backend URL from frontend/.env
-BACKEND_URL = "https://mobile-social-app-1.preview.emergentagent.com/api"
+# Configuration
+BASE_URL = "https://mobile-social-app-1.preview.emergentagent.com/api"
+TIMEOUT = 30
 
 class NovaSocialTester:
     def __init__(self):
-        self.base_url = BACKEND_URL
+        self.base_url = BASE_URL
         self.session = requests.Session()
-        self.session.timeout = 30
+        self.session.timeout = TIMEOUT
         self.test_users = []
         self.test_posts = []
         self.auth_tokens = {}
@@ -104,1059 +105,604 @@ class NovaSocialTester:
             self.log(f"Failed to create post: {response.status_code} - {response.text}", "ERROR")
             raise Exception(f"Post creation failed: {response.text}")
 
-class ComprehensiveTester:
-    def __init__(self):
-        self.base_url = BACKEND_URL
-        self.test_user_data = {
-            "fullName": "Sarah Johnson",
-            "username": "sarah_johnson",
-            "email": "sarah.johnson@example.com",
-            "password": "SecurePass123"
-        }
-        self.auth_token = None
-        self.user_id = None
+    # ============ FOLLOW SYSTEM TESTS ============
+    
+    def test_follow_system(self):
+        """Test follow/unfollow functionality"""
+        self.log("=== TESTING FOLLOW SYSTEM ===")
         
-    def log_test(self, test_name, status, details=""):
-        """Log test results"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status_symbol = "✅" if status == "PASS" else "❌" if status == "FAIL" else "⚠️"
-        print(f"[{timestamp}] {status_symbol} {test_name}")
-        if details:
-            print(f"    Details: {details}")
-        print()
-
-def print_test_header(test_name):
-    print(f"\n{'='*60}")
-    print(f"TESTING: {test_name}")
-    print(f"{'='*60}")
-
-def print_result(test_name, success, details=""):
-    status = "✅ PASS" if success else "❌ FAIL"
-    print(f"{status} - {test_name}")
-    if details:
-        print(f"   Details: {details}")
-
-def create_test_image_base64():
-    """Create a simple test image in base64 format"""
-    # Simple 1x1 pixel PNG in base64
-    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jU77zgAAAABJRU5ErkJggg=="
-
-def test_user_authentication():
-    """Test user registration and login to get JWT tokens"""
-    global user1_token, user1_data, user2_token, user2_data
+        # Create two test users
+        user1 = self.create_test_user("follower")
+        user2 = self.create_test_user("followee")
+        
+        user1_token = user1["token"]
+        user2_id = user2["user"]["id"]
+        user1_id = user1["user"]["id"]
+        
+        # Test 1: Follow user
+        self.log("Testing follow user...")
+        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert result["followed"] == True, "Follow should return followed: true"
+            self.log("✅ Follow user successful")
+        else:
+            self.log(f"❌ Follow user failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 2: Try to follow same user again (should fail)
+        self.log("Testing duplicate follow (should fail)...")
+        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
+        
+        if response.status_code == 400:
+            self.log("✅ Duplicate follow properly rejected")
+        else:
+            self.log(f"❌ Duplicate follow should be rejected: {response.status_code}", "ERROR")
+            return False
+        
+        # Test 3: Get followers list
+        self.log("Testing get followers...")
+        response = self.make_request("GET", f"/users/{user2_id}/followers", token=user1_token)
+        
+        if response.status_code == 200:
+            followers = response.json()
+            assert len(followers) == 1, "Should have 1 follower"
+            assert followers[0]["id"] == user1_id, "Follower should be user1"
+            self.log("✅ Get followers successful")
+        else:
+            self.log(f"❌ Get followers failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 4: Get following list
+        self.log("Testing get following...")
+        response = self.make_request("GET", f"/users/{user1_id}/following", token=user1_token)
+        
+        if response.status_code == 200:
+            following = response.json()
+            assert len(following) == 1, "Should be following 1 user"
+            assert following[0]["id"] == user2_id, "Should be following user2"
+            self.log("✅ Get following successful")
+        else:
+            self.log(f"❌ Get following failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 5: Unfollow user
+        self.log("Testing unfollow user...")
+        response = self.make_request("DELETE", f"/users/{user2_id}/follow", token=user1_token)
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert result["unfollowed"] == True, "Unfollow should return unfollowed: true"
+            self.log("✅ Unfollow user successful")
+        else:
+            self.log(f"❌ Unfollow user failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 6: Verify unfollow worked
+        self.log("Verifying unfollow...")
+        response = self.make_request("GET", f"/users/{user2_id}/followers", token=user1_token)
+        
+        if response.status_code == 200:
+            followers = response.json()
+            assert len(followers) == 0, "Should have 0 followers after unfollow"
+            self.log("✅ Unfollow verification successful")
+        else:
+            self.log(f"❌ Unfollow verification failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 7: Try to follow yourself (should fail)
+        self.log("Testing self-follow (should fail)...")
+        response = self.make_request("POST", f"/users/{user1_id}/follow", token=user1_token)
+        
+        if response.status_code == 400:
+            self.log("✅ Self-follow properly rejected")
+        else:
+            self.log(f"❌ Self-follow should be rejected: {response.status_code}", "ERROR")
+            return False
+        
+        self.log("✅ ALL FOLLOW SYSTEM TESTS PASSED")
+        return True
     
-    print_test_header("USER AUTHENTICATION SYSTEM")
+    # ============ NOTIFICATIONS TESTS ============
     
-    # Test User 1 Registration
-    try:
-        response = requests.post(f"{BACKEND_URL}/auth/register", json=TEST_USER_1)
-        if response.status_code == 201 or response.status_code == 200:
-            data = response.json()
-            user1_token = data.get("token")
-            user1_data = data.get("user")
-            print_result("User 1 Registration", True, f"User ID: {user1_data.get('id')}")
-        elif response.status_code == 400 and "already" in response.text.lower():
-            # User already exists, try login
-            login_response = requests.post(f"{BACKEND_URL}/auth/login", json={
-                "email": TEST_USER_1["email"],
-                "password": TEST_USER_1["password"]
-            })
-            if login_response.status_code == 200:
-                data = login_response.json()
-                user1_token = data.get("token")
-                user1_data = data.get("user")
-                print_result("User 1 Login (existing user)", True, f"User ID: {user1_data.get('id')}")
+    def test_notifications_system(self):
+        """Test notifications functionality"""
+        self.log("=== TESTING NOTIFICATIONS SYSTEM ===")
+        
+        # Create two test users
+        user1 = self.create_test_user("liker")
+        user2 = self.create_test_user("poster")
+        
+        user1_token = user1["token"]
+        user2_token = user2["token"]
+        user2_id = user2["user"]["id"]
+        
+        # Create a post by user2
+        post = self.create_test_post(user2_token, "Test post for notifications")
+        post_id = post["id"]
+        
+        # Test 1: Like post to generate notification
+        self.log("Testing notification generation via post like...")
+        response = self.make_request("POST", f"/posts/{post_id}/like", token=user1_token)
+        
+        if response.status_code == 200:
+            self.log("✅ Post liked successfully")
+        else:
+            self.log(f"❌ Post like failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Wait a moment for notification to be created
+        time.sleep(1)
+        
+        # Test 2: Get notifications
+        self.log("Testing get notifications...")
+        response = self.make_request("GET", "/notifications", token=user2_token)
+        
+        if response.status_code == 200:
+            notifications = response.json()
+            assert len(notifications) >= 1, "Should have at least 1 notification"
+            
+            # Find the like notification
+            like_notification = None
+            for notif in notifications:
+                if notif["type"] == "like" and notif["relatedId"] == post_id:
+                    like_notification = notif
+                    break
+            
+            assert like_notification is not None, "Should have like notification"
+            assert like_notification["isRead"] == False, "Notification should be unread"
+            assert like_notification["recipientId"] == user2_id, "Notification should be for user2"
+            
+            self.log("✅ Get notifications successful")
+            notification_id = like_notification["id"]
+        else:
+            self.log(f"❌ Get notifications failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 3: Mark notification as read
+        self.log("Testing mark notification as read...")
+        response = self.make_request("PUT", f"/notifications/{notification_id}/read", token=user2_token)
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert result["read"] == True, "Should return read: true"
+            self.log("✅ Mark notification as read successful")
+        else:
+            self.log(f"❌ Mark notification as read failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 4: Verify notification is marked as read
+        self.log("Verifying notification is read...")
+        response = self.make_request("GET", "/notifications", token=user2_token)
+        
+        if response.status_code == 200:
+            notifications = response.json()
+            read_notification = None
+            for notif in notifications:
+                if notif["id"] == notification_id:
+                    read_notification = notif
+                    break
+            
+            assert read_notification is not None, "Should find the notification"
+            assert read_notification["isRead"] == True, "Notification should be marked as read"
+            self.log("✅ Notification read status verified")
+        else:
+            self.log(f"❌ Notification read verification failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 5: Follow user to generate another notification
+        self.log("Testing follow notification...")
+        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
+        
+        if response.status_code == 200:
+            self.log("✅ Follow successful")
+        else:
+            self.log(f"❌ Follow failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Wait for notification
+        time.sleep(1)
+        
+        # Test 6: Mark all notifications as read
+        self.log("Testing mark all notifications as read...")
+        response = self.make_request("PUT", "/notifications/read-all", token=user2_token)
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert result["allRead"] == True, "Should return allRead: true"
+            self.log("✅ Mark all notifications as read successful")
+        else:
+            self.log(f"❌ Mark all notifications as read failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 7: Verify all notifications are read
+        self.log("Verifying all notifications are read...")
+        response = self.make_request("GET", "/notifications", token=user2_token)
+        
+        if response.status_code == 200:
+            notifications = response.json()
+            unread_count = sum(1 for notif in notifications if not notif["isRead"])
+            assert unread_count == 0, "All notifications should be read"
+            self.log("✅ All notifications read verification successful")
+        else:
+            self.log(f"❌ All notifications read verification failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        self.log("✅ ALL NOTIFICATIONS TESTS PASSED")
+        return True
+    
+    # ============ SEARCH & DISCOVERY TESTS ============
+    
+    def test_search_and_discovery(self):
+        """Test search and discovery functionality"""
+        self.log("=== TESTING SEARCH & DISCOVERY SYSTEM ===")
+        
+        # Create test users with specific names for search
+        user1 = self.create_test_user("searchable")
+        user2 = self.create_test_user("findme")
+        
+        user1_token = user1["token"]
+        user2_token = user2["token"]
+        
+        # Create posts with specific hashtags and content
+        post1 = self.create_test_post(user1_token, "This is a test post about #technology and #innovation", ["technology", "innovation", "test"])
+        post2 = self.create_test_post(user2_token, "Another post about #travel and #photography", ["travel", "photography", "adventure"])
+        
+        # Wait for posts to be indexed
+        time.sleep(1)
+        
+        # Test 1: Search users
+        self.log("Testing user search...")
+        response = self.make_request("GET", "/search", {"q": "searchable", "type": "users"})
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert len(result["users"]) >= 1, "Should find at least 1 user"
+            found_user = False
+            for user in result["users"]:
+                if "searchable" in user["username"]:
+                    found_user = True
+                    break
+            assert found_user, "Should find user with 'searchable' in username"
+            self.log("✅ User search successful")
+        else:
+            self.log(f"❌ User search failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 2: Search posts
+        self.log("Testing post search...")
+        response = self.make_request("GET", "/search", {"q": "technology", "type": "posts"})
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert len(result["posts"]) >= 1, "Should find at least 1 post"
+            found_post = False
+            for post in result["posts"]:
+                if "technology" in post["caption"].lower():
+                    found_post = True
+                    break
+            assert found_post, "Should find post with 'technology' in caption"
+            self.log("✅ Post search successful")
+        else:
+            self.log(f"❌ Post search failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 3: Search hashtags
+        self.log("Testing hashtag search...")
+        response = self.make_request("GET", "/search", {"q": "travel", "type": "hashtags"})
+        
+        if response.status_code == 200:
+            result = response.json()
+            assert len(result["hashtags"]) >= 1, "Should find at least 1 hashtag"
+            assert "travel" in result["hashtags"], "Should find 'travel' hashtag"
+            self.log("✅ Hashtag search successful")
+        else:
+            self.log(f"❌ Hashtag search failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 4: Universal search (all types)
+        self.log("Testing universal search...")
+        response = self.make_request("GET", "/search", {"q": "test", "type": "all"})
+        
+        if response.status_code == 200:
+            result = response.json()
+            total_results = len(result["users"]) + len(result["posts"]) + len(result["hashtags"])
+            assert total_results >= 1, "Should find at least 1 result across all types"
+            self.log("✅ Universal search successful")
+        else:
+            self.log(f"❌ Universal search failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 5: Get trending hashtags
+        self.log("Testing trending hashtags...")
+        response = self.make_request("GET", "/trending/hashtags", token=user1_token)
+        
+        if response.status_code == 200:
+            trending = response.json()
+            assert isinstance(trending, list), "Trending should return a list"
+            # Should have some hashtags from our test posts
+            hashtag_names = [item["hashtag"] for item in trending]
+            assert any(tag in ["technology", "travel", "test"] for tag in hashtag_names), "Should include our test hashtags"
+            self.log("✅ Trending hashtags successful")
+        else:
+            self.log(f"❌ Trending hashtags failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 6: Get user suggestions
+        self.log("Testing user suggestions...")
+        response = self.make_request("GET", "/users/suggestions", token=user1_token)
+        
+        if response.status_code == 200:
+            suggestions = response.json()
+            assert isinstance(suggestions, list), "Suggestions should return a list"
+            # Should not include the current user
+            user_ids = [user["id"] for user in suggestions]
+            assert user1["user"]["id"] not in user_ids, "Should not suggest current user"
+            self.log("✅ User suggestions successful")
+        else:
+            self.log(f"❌ User suggestions failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        self.log("✅ ALL SEARCH & DISCOVERY TESTS PASSED")
+        return True
+    
+    # ============ RECOMMENDATION ENGINE TESTS ============
+    
+    def test_recommendation_engine(self):
+        """Test recommendation engine functionality"""
+        self.log("=== TESTING RECOMMENDATION ENGINE ===")
+        
+        # Create multiple test users
+        user1 = self.create_test_user("recommender")
+        user2 = self.create_test_user("content_creator1")
+        user3 = self.create_test_user("content_creator2")
+        
+        user1_token = user1["token"]
+        user2_token = user2["token"]
+        user3_token = user3["token"]
+        user2_id = user2["user"]["id"]
+        user3_id = user3["user"]["id"]
+        
+        # Create posts with different hashtags
+        post1 = self.create_test_post(user2_token, "AI and machine learning post", ["ai", "machinelearning", "tech"])
+        post2 = self.create_test_post(user3_token, "Another AI post for recommendations", ["ai", "technology", "future"])
+        post3 = self.create_test_post(user2_token, "Travel photography post", ["travel", "photography", "nature"])
+        
+        # Wait for posts to be created
+        time.sleep(1)
+        
+        # Test 1: Get recommendations without any activity (should return popular posts)
+        self.log("Testing initial recommendations...")
+        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
+        
+        if response.status_code == 200:
+            recommendations = response.json()
+            assert isinstance(recommendations, list), "Recommendations should return a list"
+            self.log(f"✅ Initial recommendations successful ({len(recommendations)} posts)")
+        else:
+            self.log(f"❌ Initial recommendations failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 2: Like posts to establish interests
+        self.log("Establishing user interests by liking AI posts...")
+        
+        # Like AI-related posts
+        response = self.make_request("POST", f"/posts/{post1['id']}/like", token=user1_token)
+        if response.status_code != 200:
+            self.log(f"❌ Failed to like post1: {response.status_code}", "ERROR")
+            return False
+        
+        response = self.make_request("POST", f"/posts/{post2['id']}/like", token=user1_token)
+        if response.status_code != 200:
+            self.log(f"❌ Failed to like post2: {response.status_code}", "ERROR")
+            return False
+        
+        # Wait for activity to be processed
+        time.sleep(1)
+        
+        # Test 3: Get recommendations based on interests
+        self.log("Testing interest-based recommendations...")
+        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
+        
+        if response.status_code == 200:
+            recommendations = response.json()
+            assert isinstance(recommendations, list), "Recommendations should return a list"
+            
+            # Check if AI-related posts are prioritized
+            ai_posts = []
+            for post in recommendations:
+                if any(hashtag in ["ai", "machinelearning", "technology"] for hashtag in post.get("hashtags", [])):
+                    ai_posts.append(post)
+            
+            self.log(f"✅ Interest-based recommendations successful ({len(ai_posts)} AI-related posts found)")
+        else:
+            self.log(f"❌ Interest-based recommendations failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 4: Follow users to test follow-based recommendations
+        self.log("Testing follow-based recommendations...")
+        
+        # Follow user2
+        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
+        if response.status_code != 200:
+            self.log(f"❌ Failed to follow user2: {response.status_code}", "ERROR")
+            return False
+        
+        # Wait for follow to be processed
+        time.sleep(1)
+        
+        # Get recommendations again
+        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
+        
+        if response.status_code == 200:
+            recommendations = response.json()
+            assert isinstance(recommendations, list), "Recommendations should return a list"
+            
+            # Check if posts from followed users are included
+            followed_user_posts = []
+            for post in recommendations:
+                if post["authorId"] == user2_id:
+                    followed_user_posts.append(post)
+            
+            self.log(f"✅ Follow-based recommendations successful ({len(followed_user_posts)} posts from followed users)")
+        else:
+            self.log(f"❌ Follow-based recommendations failed: {response.status_code} - {response.text}", "ERROR")
+            return False
+        
+        # Test 5: Test recommendation pagination
+        self.log("Testing recommendation pagination...")
+        response = self.make_request("GET", "/feed/recommendations", {"skip": 0, "limit": 5}, token=user1_token)
+        
+        if response.status_code == 200:
+            page1 = response.json()
+            assert len(page1) <= 5, "Should respect limit parameter"
+            
+            response = self.make_request("GET", "/feed/recommendations", {"skip": 5, "limit": 5}, token=user1_token)
+            if response.status_code == 200:
+                page2 = response.json()
+                # Pages should be different (assuming we have enough posts)
+                self.log("✅ Recommendation pagination successful")
             else:
-                print_result("User 1 Authentication", False, f"Login failed: {login_response.text}")
+                self.log(f"❌ Recommendation pagination (page 2) failed: {response.status_code}", "ERROR")
                 return False
         else:
-            print_result("User 1 Registration", False, f"Status: {response.status_code}, Response: {response.text}")
+            self.log(f"❌ Recommendation pagination failed: {response.status_code} - {response.text}", "ERROR")
             return False
-    except Exception as e:
-        print_result("User 1 Authentication", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test User 2 Registration
-    try:
-        response = requests.post(f"{BACKEND_URL}/auth/register", json=TEST_USER_2)
-        if response.status_code == 201 or response.status_code == 200:
-            data = response.json()
-            user2_token = data.get("token")
-            user2_data = data.get("user")
-            print_result("User 2 Registration", True, f"User ID: {user2_data.get('id')}")
-        elif response.status_code == 400 and "already" in response.text.lower():
-            # User already exists, try login
-            login_response = requests.post(f"{BACKEND_URL}/auth/login", json={
-                "email": TEST_USER_2["email"],
-                "password": TEST_USER_2["password"]
-            })
-            if login_response.status_code == 200:
-                data = login_response.json()
-                user2_token = data.get("token")
-                user2_data = data.get("user")
-                print_result("User 2 Login (existing user)", True, f"User ID: {user2_data.get('id')}")
-            else:
-                print_result("User 2 Authentication", False, f"Login failed: {login_response.text}")
-                return False
-        else:
-            print_result("User 2 Registration", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("User 2 Authentication", False, f"Exception: {str(e)}")
-        return False
-    
-    return user1_token and user2_token
-
-def test_messaging_system():
-    """Test the complete messaging system"""
-    global test_conversation_id
-    
-    print_test_header("MESSAGING SYSTEM")
-    
-    if not user1_token or not user2_token:
-        print_result("Messaging System", False, "Authentication tokens not available")
-        return False
-    
-    headers1 = {"Authorization": f"Bearer {user1_token}"}
-    headers2 = {"Authorization": f"Bearer {user2_token}"}
-    
-    # Test 1: Create a new conversation
-    try:
-        conversation_data = {
-            "participantIds": [user1_data["id"], user2_data["id"]],
-            "isGroup": False
-        }
-        response = requests.post(f"{BACKEND_URL}/conversations", json=conversation_data, headers=headers1)
         
-        if response.status_code == 200 or response.status_code == 201:
-            conv_data = response.json()
-            test_conversation_id = conv_data.get("id")
-            print_result("POST /api/conversations - Create conversation", True, f"Conversation ID: {test_conversation_id}")
-        else:
-            print_result("POST /api/conversations - Create conversation", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("POST /api/conversations - Create conversation", False, f"Exception: {str(e)}")
-        return False
+        self.log("✅ ALL RECOMMENDATION ENGINE TESTS PASSED")
+        return True
     
-    # Test 2: Get user conversations
-    try:
-        response = requests.get(f"{BACKEND_URL}/conversations", headers=headers1)
+    # ============ INTEGRATION TESTS ============
+    
+    def test_cross_feature_integration(self):
+        """Test integration between different features"""
+        self.log("=== TESTING CROSS-FEATURE INTEGRATION ===")
         
-        if response.status_code == 200:
-            conversations = response.json()
-            found_conversation = any(conv.get("id") == test_conversation_id for conv in conversations)
-            print_result("GET /api/conversations - Get user conversations", found_conversation, f"Found {len(conversations)} conversations")
-        else:
-            print_result("GET /api/conversations - Get user conversations", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("GET /api/conversations - Get user conversations", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 3: Send a message
-    try:
-        message_data = {
-            "conversationId": test_conversation_id,
-            "text": "Hello! This is a test message from Alice.",
-            "messageType": "text"
-        }
-        response = requests.post(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", json=message_data, headers=headers1)
+        # Create test users
+        user1 = self.create_test_user("integrator1")
+        user2 = self.create_test_user("integrator2")
         
-        if response.status_code == 200 or response.status_code == 201:
-            message_response = response.json()
-            print_result("POST /api/conversations/{id}/messages - Send message", True, f"Message ID: {message_response.get('id')}")
-        else:
-            print_result("POST /api/conversations/{id}/messages - Send message", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("POST /api/conversations/{id}/messages - Send message", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 4: Send a message with media
-    try:
-        message_data = {
-            "conversationId": test_conversation_id,
-            "text": "Here's an image!",
-            "messageType": "image",
-            "media": create_test_image_base64()
-        }
-        response = requests.post(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", json=message_data, headers=headers2)
+        user1_token = user1["token"]
+        user2_token = user2["token"]
+        user1_id = user1["user"]["id"]
+        user2_id = user2["user"]["id"]
         
-        if response.status_code == 200 or response.status_code == 201:
-            message_response = response.json()
-            print_result("POST /api/conversations/{id}/messages - Send image message", True, f"Message ID: {message_response.get('id')}")
-        else:
-            print_result("POST /api/conversations/{id}/messages - Send image message", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("POST /api/conversations/{id}/messages - Send image message", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 5: Get conversation messages
-    try:
-        response = requests.get(f"{BACKEND_URL}/conversations/{test_conversation_id}/messages", headers=headers1)
+        # Test 1: Follow → Notification → Recommendation flow
+        self.log("Testing Follow → Notification → Recommendation integration...")
         
-        if response.status_code == 200:
-            messages = response.json()
-            print_result("GET /api/conversations/{id}/messages - Get messages", True, f"Retrieved {len(messages)} messages")
-            
-            # Verify message content
-            text_message = next((msg for msg in messages if msg.get("messageType") == "text"), None)
-            image_message = next((msg for msg in messages if msg.get("messageType") == "image"), None)
-            
-            if text_message and image_message:
-                print_result("Message content validation", True, "Both text and image messages found")
-            else:
-                print_result("Message content validation", False, "Missing expected message types")
-        else:
-            print_result("GET /api/conversations/{id}/messages - Get messages", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("GET /api/conversations/{id}/messages - Get messages", False, f"Exception: {str(e)}")
-        return False
-    
-    return True
-
-def test_stories_system():
-    """Test the complete stories system"""
-    global test_story_id
-    
-    print_test_header("STORIES SYSTEM")
-    
-    if not user1_token or not user2_token:
-        print_result("Stories System", False, "Authentication tokens not available")
-        return False
-    
-    headers1 = {"Authorization": f"Bearer {user1_token}"}
-    headers2 = {"Authorization": f"Bearer {user2_token}"}
-    
-    # Test 1: Create a new story
-    try:
-        story_data = {
-            "media": create_test_image_base64(),
-            "mediaType": "image",
-            "text": "This is my test story!",
-            "textPosition": {"x": 0.5, "y": 0.3},
-            "textStyle": {"color": "#ffffff", "fontSize": 24},
-            "duration": 24
-        }
-        response = requests.post(f"{BACKEND_URL}/stories", json=story_data, headers=headers1)
+        # Follow user
+        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
+        assert response.status_code == 200, "Follow should succeed"
         
-        if response.status_code == 200 or response.status_code == 201:
-            story_response = response.json()
-            test_story_id = story_response.get("id")
-            print_result("POST /api/stories - Create story", True, f"Story ID: {test_story_id}")
-        else:
-            print_result("POST /api/stories - Create story", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("POST /api/stories - Create story", False, f"Exception: {str(e)}")
-        return False
+        # Check notification was created
+        time.sleep(1)
+        response = self.make_request("GET", "/notifications", token=user2_token)
+        assert response.status_code == 200, "Get notifications should succeed"
+        notifications = response.json()
+        follow_notifications = [n for n in notifications if n["type"] == "follow"]
+        assert len(follow_notifications) >= 1, "Should have follow notification"
+        
+        # Create post by followed user
+        post = self.create_test_post(user2_token, "Post from followed user", ["integration", "test"])
+        
+        # Check if post appears in recommendations
+        time.sleep(1)
+        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
+        assert response.status_code == 200, "Get recommendations should succeed"
+        recommendations = response.json()
+        followed_user_posts = [p for p in recommendations if p["authorId"] == user2_id]
+        assert len(followed_user_posts) >= 1, "Should recommend posts from followed users"
+        
+        self.log("✅ Follow → Notification → Recommendation integration successful")
+        
+        # Test 2: Like → Notification → Search integration
+        self.log("Testing Like → Notification → Search integration...")
+        
+        # Like the post
+        response = self.make_request("POST", f"/posts/{post['id']}/like", token=user1_token)
+        assert response.status_code == 200, "Like should succeed"
+        
+        # Check notification was created
+        time.sleep(1)
+        response = self.make_request("GET", "/notifications", token=user2_token)
+        assert response.status_code == 200, "Get notifications should succeed"
+        notifications = response.json()
+        like_notifications = [n for n in notifications if n["type"] == "like"]
+        assert len(like_notifications) >= 1, "Should have like notification"
+        
+        # Search for hashtags from liked post
+        response = self.make_request("GET", "/search", {"q": "integration", "type": "hashtags"})
+        assert response.status_code == 200, "Search should succeed"
+        result = response.json()
+        assert "integration" in result["hashtags"], "Should find hashtag from liked post"
+        
+        self.log("✅ Like → Notification → Search integration successful")
+        
+        self.log("✅ ALL CROSS-FEATURE INTEGRATION TESTS PASSED")
+        return True
     
-    # Test 2: Get stories feed
-    try:
-        response = requests.get(f"{BACKEND_URL}/stories/feed", headers=headers2)
-        
-        if response.status_code == 200:
-            stories = response.json()
-            found_story = any(story.get("id") == test_story_id for story in stories)
-            print_result("GET /api/stories/feed - Get stories feed", found_story, f"Found {len(stories)} stories")
-        else:
-            print_result("GET /api/stories/feed - Get stories feed", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("GET /api/stories/feed - Get stories feed", False, f"Exception: {str(e)}")
-        return False
+    # ============ MAIN TEST RUNNER ============
     
-    # Test 3: View a story
-    try:
-        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
-        
-        if response.status_code == 200:
-            view_response = response.json()
-            print_result("POST /api/stories/{id}/view - View story", True, f"Viewed: {view_response.get('viewed')}")
-        else:
-            print_result("POST /api/stories/{id}/view - View story", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("POST /api/stories/{id}/view - View story", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 4: View story again (should not increment view count)
-    try:
-        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
-        
-        if response.status_code == 200:
-            print_result("POST /api/stories/{id}/view - View story again", True, "Duplicate view handled correctly")
-        else:
-            print_result("POST /api/stories/{id}/view - View story again", False, f"Status: {response.status_code}, Response: {response.text}")
-    except Exception as e:
-        print_result("POST /api/stories/{id}/view - View story again", False, f"Exception: {str(e)}")
-    
-    # Test 5: Delete story (by owner)
-    try:
-        response = requests.delete(f"{BACKEND_URL}/stories/{test_story_id}", headers=headers1)
-        
-        if response.status_code == 200:
-            delete_response = response.json()
-            print_result("DELETE /api/stories/{id} - Delete story", True, f"Deleted: {delete_response.get('deleted')}")
-        else:
-            print_result("DELETE /api/stories/{id} - Delete story", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("DELETE /api/stories/{id} - Delete story", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 6: Try to view deleted story (should fail)
-    try:
-        response = requests.post(f"{BACKEND_URL}/stories/{test_story_id}/view", headers=headers2)
-        
-        if response.status_code == 404:
-            print_result("View deleted story - Error handling", True, "Correctly returns 404 for deleted story")
-        else:
-            print_result("View deleted story - Error handling", False, f"Expected 404, got {response.status_code}")
-    except Exception as e:
-        print_result("View deleted story - Error handling", False, f"Exception: {str(e)}")
-    
-    return True
-
-def test_error_handling():
-    """Test error handling and validation"""
-    print_test_header("ERROR HANDLING & VALIDATION")
-    
-    if not user1_token:
-        print_result("Error Handling Tests", False, "Authentication token not available")
-        return False
-    
-    headers = {"Authorization": f"Bearer {user1_token}"}
-    
-    # Test 1: Access conversation without permission
-    try:
-        fake_conversation_id = str(uuid.uuid4())
-        response = requests.get(f"{BACKEND_URL}/conversations/{fake_conversation_id}/messages", headers=headers)
-        
-        if response.status_code == 404:
-            print_result("Access non-existent conversation", True, "Correctly returns 404")
-        else:
-            print_result("Access non-existent conversation", False, f"Expected 404, got {response.status_code}")
-    except Exception as e:
-        print_result("Access non-existent conversation", False, f"Exception: {str(e)}")
-    
-    # Test 2: Create story without media
-    try:
-        story_data = {
-            "mediaType": "image",
-            "text": "Story without media"
-        }
-        response = requests.post(f"{BACKEND_URL}/stories", json=story_data, headers=headers)
-        
-        if response.status_code == 422:  # Validation error
-            print_result("Create story without media", True, "Correctly validates required fields")
-        else:
-            print_result("Create story without media", False, f"Expected validation error, got {response.status_code}")
-    except Exception as e:
-        print_result("Create story without media", False, f"Exception: {str(e)}")
-    
-    # Test 3: Unauthorized access
-    try:
-        response = requests.get(f"{BACKEND_URL}/conversations")
-        
-        if response.status_code == 403 or response.status_code == 401:
-            print_result("Unauthorized access", True, "Correctly requires authentication")
-        else:
-            print_result("Unauthorized access", False, f"Expected 401/403, got {response.status_code}")
-    except Exception as e:
-        print_result("Unauthorized access", False, f"Exception: {str(e)}")
-    
-    return True
-
-    def test_user_registration(self):
-        """Test user registration endpoint"""
-        print("=" * 60)
-        print("TESTING USER REGISTRATION API")
-        print("=" * 60)
-        
-        # Test 1: Successful registration
-        try:
-            response = requests.post(
-                f"{self.base_url}/auth/register",
-                json=self.test_user_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "user" in data and "token" in data:
-                    self.auth_token = data["token"]
-                    self.user_id = data["user"]["id"]
-                    self.log_test("User Registration - Valid Data", "PASS", 
-                                f"User created with ID: {self.user_id}")
-                else:
-                    self.log_test("User Registration - Valid Data", "FAIL", 
-                                "Response missing user or token")
-            else:
-                self.log_test("User Registration - Valid Data", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Registration - Valid Data", "FAIL", f"Exception: {str(e)}")
-
-        # Test 2: Duplicate email validation
-        try:
-            duplicate_data = self.test_user_data.copy()
-            duplicate_data["username"] = "different_username"
-            
-            response = requests.post(
-                f"{self.base_url}/auth/register",
-                json=duplicate_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 400 and "Email already registered" in response.text:
-                self.log_test("User Registration - Duplicate Email", "PASS", 
-                            "Correctly rejected duplicate email")
-            else:
-                self.log_test("User Registration - Duplicate Email", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Registration - Duplicate Email", "FAIL", f"Exception: {str(e)}")
-
-        # Test 3: Duplicate username validation
-        try:
-            duplicate_data = self.test_user_data.copy()
-            duplicate_data["email"] = "different@example.com"
-            
-            response = requests.post(
-                f"{self.base_url}/auth/register",
-                json=duplicate_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 400 and "Username already taken" in response.text:
-                self.log_test("User Registration - Duplicate Username", "PASS", 
-                            "Correctly rejected duplicate username")
-            else:
-                self.log_test("User Registration - Duplicate Username", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Registration - Duplicate Username", "FAIL", f"Exception: {str(e)}")
-
-        # Test 4: Username format validation
-        try:
-            invalid_username_data = self.test_user_data.copy()
-            invalid_username_data["username"] = "ab"  # Too short
-            invalid_username_data["email"] = "test_short@example.com"
-            
-            response = requests.post(
-                f"{self.base_url}/auth/register",
-                json=invalid_username_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 400 and "3-20 characters" in response.text:
-                self.log_test("User Registration - Invalid Username Format", "PASS", 
-                            "Correctly rejected short username")
-            else:
-                self.log_test("User Registration - Invalid Username Format", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Registration - Invalid Username Format", "FAIL", f"Exception: {str(e)}")
-
-        # Test 5: Password validation
-        try:
-            weak_password_data = self.test_user_data.copy()
-            weak_password_data["password"] = "weak"  # Too short
-            weak_password_data["email"] = "test_weak@example.com"
-            weak_password_data["username"] = "test_weak"
-            
-            response = requests.post(
-                f"{self.base_url}/auth/register",
-                json=weak_password_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 400 and "at least 8 characters" in response.text:
-                self.log_test("User Registration - Weak Password", "PASS", 
-                            "Correctly rejected weak password")
-            else:
-                self.log_test("User Registration - Weak Password", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Registration - Weak Password", "FAIL", f"Exception: {str(e)}")
-
-    def test_user_login(self):
-        """Test user login endpoint"""
-        print("=" * 60)
-        print("TESTING USER LOGIN API")
-        print("=" * 60)
-        
-        # Test 1: Successful login
-        try:
-            login_data = {
-                "email": self.test_user_data["email"],
-                "password": self.test_user_data["password"]
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/auth/login",
-                json=login_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "user" in data and "token" in data:
-                    self.auth_token = data["token"]  # Update token
-                    self.log_test("User Login - Valid Credentials", "PASS", 
-                                "Successfully logged in with JWT token")
-                else:
-                    self.log_test("User Login - Valid Credentials", "FAIL", 
-                                "Response missing user or token")
-            else:
-                self.log_test("User Login - Valid Credentials", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Login - Valid Credentials", "FAIL", f"Exception: {str(e)}")
-
-        # Test 2: Invalid email
-        try:
-            invalid_login_data = {
-                "email": "nonexistent@example.com",
-                "password": self.test_user_data["password"]
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/auth/login",
-                json=invalid_login_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 401 and "Incorrect email or password" in response.text:
-                self.log_test("User Login - Invalid Email", "PASS", 
-                            "Correctly rejected invalid email")
-            else:
-                self.log_test("User Login - Invalid Email", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Login - Invalid Email", "FAIL", f"Exception: {str(e)}")
-
-        # Test 3: Invalid password
-        try:
-            invalid_login_data = {
-                "email": self.test_user_data["email"],
-                "password": "wrongpassword"
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/auth/login",
-                json=invalid_login_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 401 and "Incorrect email or password" in response.text:
-                self.log_test("User Login - Invalid Password", "PASS", 
-                            "Correctly rejected invalid password")
-            else:
-                self.log_test("User Login - Invalid Password", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("User Login - Invalid Password", "FAIL", f"Exception: {str(e)}")
-
-    def test_profile_update(self):
-        """Test profile update endpoint"""
-        print("=" * 60)
-        print("TESTING PROFILE UPDATE API")
-        print("=" * 60)
-        
-        if not self.auth_token:
-            self.log_test("Profile Update - Setup", "FAIL", "No auth token available")
-            return
-
-        # Test 1: Update profile with valid token
-        try:
-            # Create a simple base64 image (1x1 pixel PNG)
-            sample_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI9jU77yQAAAABJRU5ErkJggg=="
-            
-            profile_data = {
-                "profileImage": f"data:image/png;base64,{sample_image_b64}",
-                "bio": "Passionate photographer and social media enthusiast. Love capturing life's beautiful moments! 📸✨"
-            }
-            
-            response = requests.put(
-                f"{self.base_url}/auth/profile",
-                json=profile_data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.auth_token}"
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "profileImage" in data and "bio" in data:
-                    self.log_test("Profile Update - Valid Token", "PASS", 
-                                "Successfully updated profile image and bio")
-                else:
-                    self.log_test("Profile Update - Valid Token", "FAIL", 
-                                "Response missing profileImage or bio")
-            else:
-                self.log_test("Profile Update - Valid Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Profile Update - Valid Token", "FAIL", f"Exception: {str(e)}")
-
-        # Test 2: Update profile without token (unauthorized)
-        try:
-            profile_data = {
-                "bio": "This should fail"
-            }
-            
-            response = requests.put(
-                f"{self.base_url}/auth/profile",
-                json=profile_data,
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code == 403:
-                self.log_test("Profile Update - No Token", "PASS", 
-                            "Correctly rejected request without token")
-            else:
-                self.log_test("Profile Update - No Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Profile Update - No Token", "FAIL", f"Exception: {str(e)}")
-
-        # Test 3: Update profile with invalid token
-        try:
-            profile_data = {
-                "bio": "This should also fail"
-            }
-            
-            response = requests.put(
-                f"{self.base_url}/auth/profile",
-                json=profile_data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer invalid_token_here"
-                }
-            )
-            
-            if response.status_code == 401:
-                self.log_test("Profile Update - Invalid Token", "PASS", 
-                            "Correctly rejected request with invalid token")
-            else:
-                self.log_test("Profile Update - Invalid Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Profile Update - Invalid Token", "FAIL", f"Exception: {str(e)}")
-
-    def test_get_current_user(self):
-        """Test get current user profile endpoint"""
-        print("=" * 60)
-        print("TESTING GET CURRENT USER PROFILE API")
-        print("=" * 60)
-        
-        if not self.auth_token:
-            self.log_test("Get Current User - Setup", "FAIL", "No auth token available")
-            return
-
-        # Test 1: Get profile with valid token
-        try:
-            response = requests.get(
-                f"{self.base_url}/auth/me",
-                headers={
-                    "Authorization": f"Bearer {self.auth_token}"
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                expected_fields = ["id", "email", "username", "fullName", "createdAt"]
-                if all(field in data for field in expected_fields):
-                    self.log_test("Get Current User - Valid Token", "PASS", 
-                                f"Successfully retrieved user profile for {data.get('username')}")
-                else:
-                    missing_fields = [field for field in expected_fields if field not in data]
-                    self.log_test("Get Current User - Valid Token", "FAIL", 
-                                f"Response missing fields: {missing_fields}")
-            else:
-                self.log_test("Get Current User - Valid Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Get Current User - Valid Token", "FAIL", f"Exception: {str(e)}")
-
-        # Test 2: Get profile without token
-        try:
-            response = requests.get(f"{self.base_url}/auth/me")
-            
-            if response.status_code == 403:
-                self.log_test("Get Current User - No Token", "PASS", 
-                            "Correctly rejected request without token")
-            else:
-                self.log_test("Get Current User - No Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Get Current User - No Token", "FAIL", f"Exception: {str(e)}")
-
-        # Test 3: Get profile with invalid token
-        try:
-            response = requests.get(
-                f"{self.base_url}/auth/me",
-                headers={
-                    "Authorization": "Bearer invalid_token_here"
-                }
-            )
-            
-            if response.status_code == 401:
-                self.log_test("Get Current User - Invalid Token", "PASS", 
-                            "Correctly rejected request with invalid token")
-            else:
-                self.log_test("Get Current User - Invalid Token", "FAIL", 
-                            f"Status: {response.status_code}, Response: {response.text}")
-                
-        except Exception as e:
-            self.log_test("Get Current User - Invalid Token", "FAIL", f"Exception: {str(e)}")
-
-    def test_database_validation(self):
-        """Test database operations and data integrity"""
-        print("=" * 60)
-        print("TESTING DATABASE VALIDATION")
-        print("=" * 60)
-        
-        # This would require direct database access which we don't have in this test environment
-        # Instead, we'll verify through API responses that data is properly stored
-        
-        if not self.auth_token:
-            self.log_test("Database Validation", "FAIL", "No auth token available for validation")
-            return
-            
-        try:
-            # Get current user to verify data structure
-            response = requests.get(
-                f"{self.base_url}/auth/me",
-                headers={"Authorization": f"Bearer {self.auth_token}"}
-            )
-            
-            if response.status_code == 200:
-                user_data = response.json()
-                
-                # Check that password is not returned
-                if "password" not in user_data:
-                    self.log_test("Database Validation - Password Security", "PASS", 
-                                "Password correctly excluded from API response")
-                else:
-                    self.log_test("Database Validation - Password Security", "FAIL", 
-                                "Password field present in API response")
-                
-                # Check user data structure
-                required_fields = ["id", "email", "username", "fullName", "createdAt"]
-                if all(field in user_data for field in required_fields):
-                    self.log_test("Database Validation - User Schema", "PASS", 
-                                "User data structure matches expected schema")
-                else:
-                    missing = [f for f in required_fields if f not in user_data]
-                    self.log_test("Database Validation - User Schema", "FAIL", 
-                                f"Missing required fields: {missing}")
-                    
-                # Check that username is lowercase (as per backend logic)
-                if user_data.get("username") == self.test_user_data["username"].lower():
-                    self.log_test("Database Validation - Username Format", "PASS", 
-                                "Username correctly stored in lowercase")
-                else:
-                    self.log_test("Database Validation - Username Format", "FAIL", 
-                                f"Username format issue: expected {self.test_user_data['username'].lower()}, got {user_data.get('username')}")
-                    
-            else:
-                self.log_test("Database Validation", "FAIL", 
-                            f"Could not retrieve user data for validation: {response.status_code}")
-                
-        except Exception as e:
-            self.log_test("Database Validation", "FAIL", f"Exception: {str(e)}")
-
     def run_all_tests(self):
-        """Run all authentication tests"""
-        print("🚀 Starting NovaSocial Backend Authentication Tests")
-        print(f"Backend URL: {self.base_url}")
-        print(f"Test User: {self.test_user_data['email']}")
-        print()
+        """Run all backend tests"""
+        self.log("🚀 STARTING NOVASOCIAL BACKEND COMPREHENSIVE TESTING")
+        self.log(f"Testing against: {self.base_url}")
         
-        # Run tests in sequence
-        self.test_user_registration()
-        self.test_user_login()
-        self.test_profile_update()
-        self.test_get_current_user()
-        self.test_database_validation()
+        test_results = {}
         
-        print("=" * 60)
-        print("🏁 AUTHENTICATION TESTING COMPLETE")
-        print("=" * 60)
-
-def run_comprehensive_tests():
-    """Run all backend tests including messaging and stories"""
-    print("🚀 Starting NovaSocial Backend Comprehensive API Tests")
-    print(f"Backend URL: {BACKEND_URL}")
-    print(f"Test started at: {datetime.now()}")
-    
-    test_results = {
-        "authentication": False,
-        "messaging": False,
-        "stories": False,
-        "error_handling": False
-    }
-    
-    # Run tests in sequence
-    test_results["authentication"] = test_user_authentication()
-    
-    if test_results["authentication"]:
-        test_results["messaging"] = test_messaging_system()
-        test_results["stories"] = test_stories_system()
-        test_results["error_handling"] = test_error_handling()
-    
-    # Print final summary
-    print_test_header("FINAL TEST SUMMARY")
-    
-    total_tests = len(test_results)
-    passed_tests = sum(1 for result in test_results.values() if result is True)
-    
-    for test_name, result in test_results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status} - {test_name.upper()}")
-    
-    print(f"\n📊 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
-    
-    if passed_tests == total_tests:
-        print("🎉 ALL TESTS PASSED! Backend is working correctly.")
-        return True
-    else:
-        print("⚠️  SOME TESTS FAILED! Check the details above.")
-        return False
-
-def test_phase8_endpoints():
-    """Test Phase 8 endpoints: user posts and user stats"""
-    print_test_header("PHASE 8 ENDPOINTS - USER POSTS & STATS")
-    
-    if not user1_token or not user2_token:
-        print_result("Phase 8 Endpoints", False, "Authentication tokens not available")
-        return False
-    
-    headers1 = {"Authorization": f"Bearer {user1_token}"}
-    headers2 = {"Authorization": f"Bearer {user2_token}"}
-    
-    # First, create some test posts for user1
-    test_posts_created = []
-    
-    # Create 3 test posts for user1
-    for i in range(3):
         try:
-            post_data = {
-                "caption": f"Test post {i+1} by {user1_data['username']} - sharing amazing content! #test #phase8 #novasocial",
-                "media": [create_test_image_base64()],
-                "mediaTypes": ["image"],
-                "hashtags": ["test", "phase8", "novasocial"],
-                "taggedUsers": []
-            }
-            response = requests.post(f"{BACKEND_URL}/posts", json=post_data, headers=headers1)
+            # Test Follow System
+            test_results["follow_system"] = self.test_follow_system()
             
-            if response.status_code == 200 or response.status_code == 201:
-                post = response.json()
-                test_posts_created.append(post)
-                print_result(f"Create test post {i+1}", True, f"Post ID: {post.get('id')}")
-            else:
-                print_result(f"Create test post {i+1}", False, f"Status: {response.status_code}, Response: {response.text}")
+            # Test Notifications System  
+            test_results["notifications_system"] = self.test_notifications_system()
+            
+            # Test Search & Discovery
+            test_results["search_discovery"] = self.test_search_and_discovery()
+            
+            # Test Recommendation Engine
+            test_results["recommendation_engine"] = self.test_recommendation_engine()
+            
+            # Test Cross-Feature Integration
+            test_results["integration"] = self.test_cross_feature_integration()
+            
         except Exception as e:
-            print_result(f"Create test post {i+1}", False, f"Exception: {str(e)}")
-    
-    # Create follow relationship for stats testing
-    try:
-        response = requests.post(f"{BACKEND_URL}/users/{user2_data['id']}/follow", headers=headers1)
-        if response.status_code == 200:
-            print_result("Create follow relationship", True, f"{user1_data['username']} follows {user2_data['username']}")
-        else:
-            print_result("Create follow relationship", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_result("Create follow relationship", False, f"Exception: {str(e)}")
-    
-    # Test 1: GET /api/users/{user_id}/posts - Get posts by specific user
-    try:
-        user_id = user1_data["id"]
-        response = requests.get(f"{BACKEND_URL}/users/{user_id}/posts")
+            self.log(f"❌ CRITICAL ERROR during testing: {e}", "ERROR")
+            test_results["critical_error"] = str(e)
         
-        if response.status_code == 200:
-            posts = response.json()
-            print_result("GET /api/users/{user_id}/posts - Get user posts", True, f"Retrieved {len(posts)} posts")
-            
-            # Validate response structure
-            if posts:
-                post = posts[0]
-                required_fields = ["id", "authorId", "author", "caption", "media", "mediaTypes", "createdAt"]
-                missing_fields = [field for field in required_fields if field not in post]
+        # Print final results
+        self.log("\n" + "="*60)
+        self.log("🏁 FINAL TEST RESULTS")
+        self.log("="*60)
+        
+        passed_tests = 0
+        total_tests = 0
+        
+        for test_name, result in test_results.items():
+            if test_name == "critical_error":
+                self.log(f"❌ CRITICAL ERROR: {result}", "ERROR")
+                continue
                 
-                if missing_fields:
-                    print_result("User posts response validation", False, f"Missing fields: {missing_fields}")
-                else:
-                    print_result("User posts response validation", True, "All required fields present")
-                    
-                # Check if posts are in descending order (newest first)
-                if len(posts) > 1:
-                    first_time = posts[0]["createdAt"]
-                    second_time = posts[1]["createdAt"]
-                    if first_time >= second_time:
-                        print_result("User posts ordering", True, "Posts correctly ordered (newest first)")
-                    else:
-                        print_result("User posts ordering", False, "Posts not properly ordered")
-                        
-                # Validate author information
-                author = post["author"]
-                author_fields = ["id", "username", "fullName", "email"]
-                missing_author_fields = [field for field in author_fields if field not in author]
-                
-                if missing_author_fields:
-                    print_result("User posts author info", False, f"Missing author fields: {missing_author_fields}")
-                else:
-                    print_result("User posts author info", True, "Author information complete")
+            total_tests += 1
+            if result:
+                self.log(f"✅ {test_name.replace('_', ' ').title()}: PASSED")
+                passed_tests += 1
             else:
-                print_result("User posts content", False, "No posts returned despite creating test posts")
+                self.log(f"❌ {test_name.replace('_', ' ').title()}: FAILED", "ERROR")
+        
+        self.log("="*60)
+        self.log(f"📊 SUMMARY: {passed_tests}/{total_tests} tests passed")
+        
+        if passed_tests == total_tests:
+            self.log("🎉 ALL TESTS PASSED! Backend is working correctly.")
+            return True
         else:
-            print_result("GET /api/users/{user_id}/posts - Get user posts", False, f"Status: {response.status_code}, Response: {response.text}")
+            self.log("⚠️  SOME TESTS FAILED! Check logs above for details.", "ERROR")
             return False
-    except Exception as e:
-        print_result("GET /api/users/{user_id}/posts - Get user posts", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 2: GET /api/users/{user_id}/posts with non-existent user
-    try:
-        fake_user_id = str(uuid.uuid4())
-        response = requests.get(f"{BACKEND_URL}/users/{fake_user_id}/posts")
-        
-        if response.status_code == 404:
-            print_result("GET /api/users/{user_id}/posts - Non-existent user", True, "Correctly returns 404")
-        else:
-            print_result("GET /api/users/{user_id}/posts - Non-existent user", False, f"Expected 404, got {response.status_code}")
-    except Exception as e:
-        print_result("GET /api/users/{user_id}/posts - Non-existent user", False, f"Exception: {str(e)}")
-    
-    # Test 3: GET /api/users/{user_id}/stats - Get user statistics
-    try:
-        user_id = user1_data["id"]
-        response = requests.get(f"{BACKEND_URL}/users/{user_id}/stats")
-        
-        if response.status_code == 200:
-            stats = response.json()
-            print_result("GET /api/users/{user_id}/stats - Get user stats", True, f"Stats: {stats}")
-            
-            # Validate response structure
-            required_fields = ["postsCount", "followersCount", "followingCount"]
-            missing_fields = [field for field in required_fields if field not in stats]
-            
-            if missing_fields:
-                print_result("User stats response validation", False, f"Missing fields: {missing_fields}")
-            else:
-                print_result("User stats response validation", True, "All required fields present")
-                
-            # Validate data types and values
-            for field in required_fields:
-                if not isinstance(stats[field], int):
-                    print_result(f"User stats {field} type", False, f"Expected int, got {type(stats[field])}")
-                elif stats[field] < 0:
-                    print_result(f"User stats {field} value", False, f"Negative value: {stats[field]}")
-                else:
-                    print_result(f"User stats {field} validation", True, f"Valid value: {stats[field]}")
-                    
-            # Check if stats make sense based on our test data
-            if stats["postsCount"] >= len(test_posts_created):
-                print_result("User stats posts count accuracy", True, f"Posts count {stats['postsCount']} >= created posts {len(test_posts_created)}")
-            else:
-                print_result("User stats posts count accuracy", False, f"Posts count {stats['postsCount']} < created posts {len(test_posts_created)}")
-                
-        else:
-            print_result("GET /api/users/{user_id}/stats - Get user stats", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        print_result("GET /api/users/{user_id}/stats - Get user stats", False, f"Exception: {str(e)}")
-        return False
-    
-    # Test 4: GET /api/users/{user_id}/stats with non-existent user
-    try:
-        fake_user_id = str(uuid.uuid4())
-        response = requests.get(f"{BACKEND_URL}/users/{fake_user_id}/stats")
-        
-        if response.status_code == 404:
-            print_result("GET /api/users/{user_id}/stats - Non-existent user", True, "Correctly returns 404")
-        else:
-            print_result("GET /api/users/{user_id}/stats - Non-existent user", False, f"Expected 404, got {response.status_code}")
-    except Exception as e:
-        print_result("GET /api/users/{user_id}/stats - Non-existent user", False, f"Exception: {str(e)}")
-    
-    # Test 5: Test with authentication (should work with or without auth for these public endpoints)
-    try:
-        user_id = user1_data["id"]
-        response = requests.get(f"{BACKEND_URL}/users/{user_id}/posts", headers=headers2)
-        
-        if response.status_code == 200:
-            print_result("User posts with authentication", True, "Endpoints work with valid auth token")
-        else:
-            print_result("User posts with authentication", False, f"Failed with auth token: {response.status_code}")
-    except Exception as e:
-        print_result("User posts with authentication", False, f"Exception: {str(e)}")
-    
-    return True
 
-def run_comprehensive_tests():
-    """Run all backend tests including messaging, stories, and Phase 8 endpoints"""
-    print("🚀 Starting NovaSocial Backend Comprehensive API Tests")
-    print(f"Backend URL: {BACKEND_URL}")
-    print(f"Test started at: {datetime.now()}")
-    
-    test_results = {
-        "authentication": False,
-        "messaging": False,
-        "stories": False,
-        "error_handling": False,
-        "phase8_endpoints": False
-    }
-    
-    # Run tests in sequence
-    test_results["authentication"] = test_user_authentication()
-    
-    if test_results["authentication"]:
-        test_results["messaging"] = test_messaging_system()
-        test_results["stories"] = test_stories_system()
-        test_results["error_handling"] = test_error_handling()
-        test_results["phase8_endpoints"] = test_phase8_endpoints()
-    
-    # Print final summary
-    print_test_header("FINAL TEST SUMMARY")
-    
-    total_tests = len(test_results)
-    passed_tests = sum(1 for result in test_results.values() if result is True)
-    
-    for test_name, result in test_results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status} - {test_name.upper()}")
-    
-    print(f"\n📊 OVERALL RESULT: {passed_tests}/{total_tests} tests passed")
-    
-    if passed_tests == total_tests:
-        print("🎉 ALL TESTS PASSED! Backend is working correctly.")
-        return True
-    else:
-        print("⚠️  SOME TESTS FAILED! Check the details above.")
-        return False
 
 if __name__ == "__main__":
-    # Run comprehensive tests for messaging, stories, and Phase 8 endpoints
-    success = run_comprehensive_tests()
+    tester = NovaSocialTester()
+    success = tester.run_all_tests()
     exit(0 if success else 1)
