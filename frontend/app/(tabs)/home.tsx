@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../../src/contexts/AuthContext';
+import { useAuthContext } from '../../src/contexts/AuthContext';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { StoriesList } from '../../src/features/stories/components/list/StoriesList';
 import { COLORS, SPACING } from '../../src/utils/constants';
