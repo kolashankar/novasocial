@@ -167,6 +167,7 @@ export default function Home() {
   return (
     <SafeAreaView style={styles.container}>
       {renderHeader()}
+      <StoriesList />
       
       <FlashList
         data={posts}
