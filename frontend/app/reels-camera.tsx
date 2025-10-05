@@ -10,14 +10,30 @@ import {
   Modal,
   ScrollView,
   Animated,
+  Platform,
 } from 'react-native';
-import { Camera, useCameraDevices, useCameraPermission } from 'react-native-vision-camera';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../src/utils/constants';
 import { useAuth } from '../src/contexts/AuthContext';
 import Constants from 'expo-constants';
+
+// Conditionally import VisionCamera only for mobile platforms
+let Camera: any = null;
+let useCameraDevices: any = null;
+let useCameraPermission: any = null;
+
+if (Platform.OS !== 'web') {
+  try {
+    const VisionCamera = require('react-native-vision-camera');
+    Camera = VisionCamera.Camera;
+    useCameraDevices = VisionCamera.useCameraDevices;
+    useCameraPermission = VisionCamera.useCameraPermission;
+  } catch (error) {
+    console.warn('VisionCamera not available on this platform');
+  }
+}
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
