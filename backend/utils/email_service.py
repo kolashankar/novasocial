@@ -1,8 +1,6 @@
 import os
 import secrets
 import string
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
@@ -11,15 +9,10 @@ logger = logging.getLogger(__name__)
 
 class EmailService:
     def __init__(self):
-        self.api_key = os.getenv('SENDGRID_API_KEY')
+        # Use mock email service for development
         self.sender_email = os.getenv('SENDER_EMAIL', 'noreply@novasocial.com')
-        
-        if not self.api_key:
-            logger.warning("SendGrid API key not found. Email functionality will be disabled.")
-            self.enabled = False
-        else:
-            self.enabled = True
-            self.sg = SendGridAPIClient(api_key=self.api_key)
+        self.enabled = True  # Always enabled for mock service
+        logger.info("Using mock email service for development")
 
     def generate_verification_code(self, length: int = 6) -> str:
         """Generate a secure verification code"""
