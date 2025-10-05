@@ -480,6 +480,9 @@ async def get_current_user_profile(current_user = Depends(get_current_user)):
 from models.auth_models import *
 from utils.email_service import email_service
 
+# PHASE 14: Enhanced Messaging Imports
+from models.messaging_models import ConversationSettings, TypingIndicator
+
 @api_router.post("/auth/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest):
     """Send password reset verification code via email"""
