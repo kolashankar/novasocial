@@ -2981,7 +2981,7 @@ async def get_app_info():
 @api_router.get("/settings/theme", response_model=dict)
 async def get_theme_settings(current_user = Depends(get_current_user)):
     """Get user's theme settings"""
-    settings = await db.user_theme_settings.find_one({"userId": current_user["id"]})
+    settings = await db.user_theme_settings.find_one({"userId": current_user["id"]}, {"_id": 0})
     
     if not settings:
         # Return default theme settings
