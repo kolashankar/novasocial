@@ -204,11 +204,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Follow System & Engagement Features"
-    - "Notifications System" 
-    - "Search & Discovery System"
-    - "Recommendation Engine"
-    - "Backend Models Organization & 7-Level Structure"
+    - "Phase 14 - Enhanced Messaging & Real-time Features"
+    - "Phase 15 - UI/UX & Accessibility Improvements"
+    - "Phase 16 - Posting & Media Enhancements" 
+    - "Phase 17 - Story & Creative Tools"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
