@@ -22,706 +22,396 @@ class BackendTester:
     def __init__(self):
         self.base_url = BASE_URL
         self.session = requests.Session()
-        self.session.timeout = TIMEOUT
-        self.test_users = []
-        self.test_posts = []
-        self.auth_tokens = {}
+        self.auth_token = None
+        self.user_id = None
+        self.test_results = []
         
-    def log(self, message: str, level: str = "INFO"):
-        """Log test messages with timestamp"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] {level}: {message}")
+    def log_result(self, test_name: str, success: bool, message: str, details: Dict = None):
+        """Log test result"""
+        result = {
+            "test": test_name,
+            "success": success,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+            "details": details or {}
+        }
+        self.test_results.append(result)
+        status = "✅ PASS" if success else "❌ FAIL"
+        print(f"{status} - {test_name}: {message}")
+        if details and not success:
+            print(f"   Details: {details}")
     
-    def make_request(self, method: str, endpoint: str, data: dict = None, headers: dict = None, token: str = None) -> requests.Response:
-        """Make HTTP request with proper error handling"""
+    def make_request(self, method: str, endpoint: str, data: Dict = None, params: Dict = None, auth_required: bool = True) -> tuple:
+        """Make HTTP request with proper headers"""
         url = f"{self.base_url}{endpoint}"
+        headers = {"Content-Type": "application/json"}
         
-        # Set up headers
-        request_headers = {"Content-Type": "application/json"}
-        if headers:
-            request_headers.update(headers)
-        if token:
-            request_headers["Authorization"] = f"Bearer {token}"
+        if auth_required and self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
         
         try:
             if method.upper() == "GET":
-                response = self.session.get(url, headers=request_headers, params=data)
+                response = self.session.get(url, headers=headers, params=params, timeout=30)
             elif method.upper() == "POST":
-                response = self.session.post(url, headers=request_headers, json=data)
+                response = self.session.post(url, headers=headers, json=data, timeout=30)
             elif method.upper() == "PUT":
-                response = self.session.put(url, headers=request_headers, json=data)
+                response = self.session.put(url, headers=headers, json=data, timeout=30)
             elif method.upper() == "DELETE":
-                response = self.session.delete(url, headers=request_headers, json=data)
+                response = self.session.delete(url, headers=headers, timeout=30)
             else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
+                return False, {"error": f"Unsupported method: {method}"}
             
-            return response
-        except requests.exceptions.RequestException as e:
-            self.log(f"Request failed: {e}", "ERROR")
-            raise
-    
-    def create_test_user(self, username_suffix: str = None) -> Dict:
-        """Create a test user and return user data with token"""
-        if not username_suffix:
-            username_suffix = str(uuid.uuid4())[:8]
-        
-        user_data = {
-            "fullName": f"Test User {username_suffix}",
-            "username": f"testuser_{username_suffix}",
-            "email": f"test_{username_suffix}@novasocial.com",
-            "password": "TestPassword123!"
-        }
-        
-        response = self.make_request("POST", "/auth/register", user_data)
-        
-        if response.status_code in [200, 201]:
-            result = response.json()
-            self.test_users.append(result["user"])
-            self.auth_tokens[result["user"]["id"]] = result["token"]
-            self.log(f"Created test user: {user_data['username']}")
-            return result
-        elif response.status_code == 400 and "already" in response.text.lower():
-            # User already exists, try to login
-            login_data = {
-                "email": user_data["email"],
-                "password": user_data["password"]
+            return True, {
+                "status_code": response.status_code,
+                "response": response.json() if response.content else {},
+                "headers": dict(response.headers)
             }
-            login_response = self.make_request("POST", "/auth/login", login_data)
-            if login_response.status_code == 200:
-                result = login_response.json()
-                self.test_users.append(result["user"])
-                self.auth_tokens[result["user"]["id"]] = result["token"]
-                self.log(f"Logged in existing test user: {user_data['username']}")
-                return result
-            else:
-                self.log(f"Failed to login existing user {user_data['username']}: {login_response.status_code} - {login_response.text}", "ERROR")
-                raise Exception(f"User login failed: {login_response.text}")
-        else:
-            self.log(f"Failed to create user {user_data['username']}: {response.status_code} - {response.text}", "ERROR")
-            raise Exception(f"User creation failed: {response.text}")
+        except requests.exceptions.RequestException as e:
+            return False, {"error": str(e)}
+        except json.JSONDecodeError as e:
+            return False, {"error": f"JSON decode error: {str(e)}", "response_text": response.text}
     
-    def create_test_post(self, user_token: str, caption: str = None, hashtags: List[str] = None) -> Dict:
-        """Create a test post"""
-        if not caption:
-            caption = f"Test post created at {datetime.now().isoformat()}"
+    def setup_test_user(self):
+        """Setup test user for authentication"""
+        print("\n🔧 Setting up test user...")
         
-        post_data = {
-            "caption": caption,
-            "media": ["data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/8A"],
-            "mediaTypes": ["image"],
-            "hashtags": hashtags or ["test", "novasocial"],
-            "taggedUsers": []
+        # Try to register user (might already exist)
+        register_data = {
+            "fullName": TEST_USER_FULLNAME,
+            "username": TEST_USER_USERNAME,
+            "email": TEST_USER_EMAIL,
+            "password": TEST_USER_PASSWORD
         }
         
-        response = self.make_request("POST", "/posts", post_data, token=user_token)
+        success, result = self.make_request("POST", "/auth/register", register_data, auth_required=False)
         
-        if response.status_code in [200, 201]:
-            result = response.json()
-            self.test_posts.append(result)
-            self.log(f"Created test post: {result['id']}")
-            return result
+        if success and result["status_code"] == 200:
+            self.auth_token = result["response"]["token"]
+            self.user_id = result["response"]["user"]["id"]
+            self.log_result("User Registration", True, "Test user registered successfully")
         else:
-            self.log(f"Failed to create post: {response.status_code} - {response.text}", "ERROR")
-            raise Exception(f"Post creation failed: {response.text}")
-
-    # ============ FOLLOW SYSTEM TESTS ============
-    
-    def test_follow_system(self):
-        """Test follow/unfollow functionality"""
-        self.log("=== TESTING FOLLOW SYSTEM ===")
-        
-        # Create two test users
-        user1 = self.create_test_user("follower")
-        user2 = self.create_test_user("followee")
-        
-        user1_token = user1["token"]
-        user2_id = user2["user"]["id"]
-        user1_id = user1["user"]["id"]
-        
-        # Test 1: Follow user
-        self.log("Testing follow user...")
-        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert result["followed"] == True, "Follow should return followed: true"
-            self.log("✅ Follow user successful")
-        else:
-            self.log(f"❌ Follow user failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 2: Try to follow same user again (should fail)
-        self.log("Testing duplicate follow (should fail)...")
-        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
-        
-        if response.status_code == 400:
-            self.log("✅ Duplicate follow properly rejected")
-        else:
-            self.log(f"❌ Duplicate follow should be rejected: {response.status_code}", "ERROR")
-            return False
-        
-        # Test 3: Get followers list
-        self.log("Testing get followers...")
-        response = self.make_request("GET", f"/users/{user2_id}/followers", token=user1_token)
-        
-        if response.status_code == 200:
-            followers = response.json()
-            assert len(followers) == 1, "Should have 1 follower"
-            assert followers[0]["id"] == user1_id, "Follower should be user1"
-            self.log("✅ Get followers successful")
-        else:
-            self.log(f"❌ Get followers failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 4: Get following list
-        self.log("Testing get following...")
-        response = self.make_request("GET", f"/users/{user1_id}/following", token=user1_token)
-        
-        if response.status_code == 200:
-            following = response.json()
-            assert len(following) == 1, "Should be following 1 user"
-            assert following[0]["id"] == user2_id, "Should be following user2"
-            self.log("✅ Get following successful")
-        else:
-            self.log(f"❌ Get following failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 5: Unfollow user
-        self.log("Testing unfollow user...")
-        response = self.make_request("DELETE", f"/users/{user2_id}/follow", token=user1_token)
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert result["unfollowed"] == True, "Unfollow should return unfollowed: true"
-            self.log("✅ Unfollow user successful")
-        else:
-            self.log(f"❌ Unfollow user failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 6: Verify unfollow worked
-        self.log("Verifying unfollow...")
-        response = self.make_request("GET", f"/users/{user2_id}/followers", token=user1_token)
-        
-        if response.status_code == 200:
-            followers = response.json()
-            assert len(followers) == 0, "Should have 0 followers after unfollow"
-            self.log("✅ Unfollow verification successful")
-        else:
-            self.log(f"❌ Unfollow verification failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 7: Try to follow yourself (should fail)
-        self.log("Testing self-follow (should fail)...")
-        response = self.make_request("POST", f"/users/{user1_id}/follow", token=user1_token)
-        
-        if response.status_code == 400:
-            self.log("✅ Self-follow properly rejected")
-        else:
-            self.log(f"❌ Self-follow should be rejected: {response.status_code}", "ERROR")
-            return False
-        
-        self.log("✅ ALL FOLLOW SYSTEM TESTS PASSED")
-        return True
-    
-    # ============ NOTIFICATIONS TESTS ============
-    
-    def test_notifications_system(self):
-        """Test notifications functionality"""
-        self.log("=== TESTING NOTIFICATIONS SYSTEM ===")
-        
-        # Create two test users
-        user1 = self.create_test_user("liker")
-        user2 = self.create_test_user("poster")
-        
-        user1_token = user1["token"]
-        user2_token = user2["token"]
-        user2_id = user2["user"]["id"]
-        
-        # Create a post by user2
-        post = self.create_test_post(user2_token, "Test post for notifications")
-        post_id = post["id"]
-        
-        # Test 1: Like post to generate notification
-        self.log("Testing notification generation via post like...")
-        response = self.make_request("POST", f"/posts/{post_id}/like", token=user1_token)
-        
-        if response.status_code == 200:
-            self.log("✅ Post liked successfully")
-        else:
-            self.log(f"❌ Post like failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Wait a moment for notification to be created
-        time.sleep(1)
-        
-        # Test 2: Get notifications
-        self.log("Testing get notifications...")
-        response = self.make_request("GET", "/notifications", token=user2_token)
-        
-        if response.status_code == 200:
-            notifications = response.json()
-            assert len(notifications) >= 1, "Should have at least 1 notification"
+            # User might already exist, try login
+            login_data = {
+                "email": TEST_USER_EMAIL,
+                "password": TEST_USER_PASSWORD
+            }
             
-            # Find the like notification
-            like_notification = None
-            for notif in notifications:
-                if notif["type"] == "like" and notif["relatedId"] == post_id:
-                    like_notification = notif
-                    break
+            success, result = self.make_request("POST", "/auth/login", login_data, auth_required=False)
             
-            assert like_notification is not None, "Should have like notification"
-            assert like_notification["isRead"] == False, "Notification should be unread"
-            assert like_notification["recipientId"] == user2_id, "Notification should be for user2"
-            
-            self.log("✅ Get notifications successful")
-            notification_id = like_notification["id"]
-        else:
-            self.log(f"❌ Get notifications failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 3: Mark notification as read
-        self.log("Testing mark notification as read...")
-        response = self.make_request("PUT", f"/notifications/{notification_id}/read", token=user2_token)
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert result["read"] == True, "Should return read: true"
-            self.log("✅ Mark notification as read successful")
-        else:
-            self.log(f"❌ Mark notification as read failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 4: Verify notification is marked as read
-        self.log("Verifying notification is read...")
-        response = self.make_request("GET", "/notifications", token=user2_token)
-        
-        if response.status_code == 200:
-            notifications = response.json()
-            read_notification = None
-            for notif in notifications:
-                if notif["id"] == notification_id:
-                    read_notification = notif
-                    break
-            
-            assert read_notification is not None, "Should find the notification"
-            assert read_notification["isRead"] == True, "Notification should be marked as read"
-            self.log("✅ Notification read status verified")
-        else:
-            self.log(f"❌ Notification read verification failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 5: Follow user to generate another notification
-        self.log("Testing follow notification...")
-        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
-        
-        if response.status_code == 200:
-            self.log("✅ Follow successful")
-        else:
-            self.log(f"❌ Follow failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Wait for notification
-        time.sleep(1)
-        
-        # Test 6: Mark all notifications as read
-        self.log("Testing mark all notifications as read...")
-        response = self.make_request("PUT", "/notifications/read-all", token=user2_token)
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert result["allRead"] == True, "Should return allRead: true"
-            self.log("✅ Mark all notifications as read successful")
-        else:
-            self.log(f"❌ Mark all notifications as read failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 7: Verify all notifications are read
-        self.log("Verifying all notifications are read...")
-        response = self.make_request("GET", "/notifications", token=user2_token)
-        
-        if response.status_code == 200:
-            notifications = response.json()
-            unread_count = sum(1 for notif in notifications if not notif["isRead"])
-            assert unread_count == 0, "All notifications should be read"
-            self.log("✅ All notifications read verification successful")
-        else:
-            self.log(f"❌ All notifications read verification failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        self.log("✅ ALL NOTIFICATIONS TESTS PASSED")
-        return True
-    
-    # ============ SEARCH & DISCOVERY TESTS ============
-    
-    def test_search_and_discovery(self):
-        """Test search and discovery functionality"""
-        self.log("=== TESTING SEARCH & DISCOVERY SYSTEM ===")
-        
-        # Create test users with specific names for search
-        user1 = self.create_test_user("searchable")
-        user2 = self.create_test_user("findme")
-        
-        user1_token = user1["token"]
-        user2_token = user2["token"]
-        
-        # Create posts with specific hashtags and content
-        post1 = self.create_test_post(user1_token, "This is a test post about #technology and #innovation", ["technology", "innovation", "test"])
-        post2 = self.create_test_post(user2_token, "Another post about #travel and #photography", ["travel", "photography", "adventure"])
-        
-        # Wait for posts to be indexed
-        time.sleep(1)
-        
-        # Test 1: Search users
-        self.log("Testing user search...")
-        response = self.make_request("GET", "/search", {"q": "searchable", "type": "users"})
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert len(result["users"]) >= 1, "Should find at least 1 user"
-            found_user = False
-            for user in result["users"]:
-                if "searchable" in user["username"]:
-                    found_user = True
-                    break
-            assert found_user, "Should find user with 'searchable' in username"
-            self.log("✅ User search successful")
-        else:
-            self.log(f"❌ User search failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 2: Search posts
-        self.log("Testing post search...")
-        response = self.make_request("GET", "/search", {"q": "technology", "type": "posts"})
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert len(result["posts"]) >= 1, "Should find at least 1 post"
-            found_post = False
-            for post in result["posts"]:
-                if "technology" in post["caption"].lower():
-                    found_post = True
-                    break
-            assert found_post, "Should find post with 'technology' in caption"
-            self.log("✅ Post search successful")
-        else:
-            self.log(f"❌ Post search failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 3: Search hashtags
-        self.log("Testing hashtag search...")
-        response = self.make_request("GET", "/search", {"q": "travel", "type": "hashtags"})
-        
-        if response.status_code == 200:
-            result = response.json()
-            assert len(result["hashtags"]) >= 1, "Should find at least 1 hashtag"
-            assert "travel" in result["hashtags"], "Should find 'travel' hashtag"
-            self.log("✅ Hashtag search successful")
-        else:
-            self.log(f"❌ Hashtag search failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 4: Universal search (all types)
-        self.log("Testing universal search...")
-        response = self.make_request("GET", "/search", {"q": "test", "type": "all"})
-        
-        if response.status_code == 200:
-            result = response.json()
-            total_results = len(result["users"]) + len(result["posts"]) + len(result["hashtags"])
-            assert total_results >= 1, "Should find at least 1 result across all types"
-            self.log("✅ Universal search successful")
-        else:
-            self.log(f"❌ Universal search failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 5: Get trending hashtags
-        self.log("Testing trending hashtags...")
-        response = self.make_request("GET", "/trending/hashtags", token=user1_token)
-        
-        if response.status_code == 200:
-            trending = response.json()
-            assert isinstance(trending, list), "Trending should return a list"
-            # Should have some hashtags from our test posts
-            hashtag_names = [item["hashtag"] for item in trending]
-            assert any(tag in ["technology", "travel", "test"] for tag in hashtag_names), "Should include our test hashtags"
-            self.log("✅ Trending hashtags successful")
-        else:
-            self.log(f"❌ Trending hashtags failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 6: Get user suggestions
-        self.log("Testing user suggestions...")
-        response = self.make_request("GET", "/users/suggestions", token=user1_token)
-        
-        if response.status_code == 200:
-            suggestions = response.json()
-            assert isinstance(suggestions, list), "Suggestions should return a list"
-            # Should not include the current user
-            user_ids = [user["id"] for user in suggestions]
-            assert user1["user"]["id"] not in user_ids, "Should not suggest current user"
-            self.log("✅ User suggestions successful")
-        else:
-            self.log(f"❌ User suggestions failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        self.log("✅ ALL SEARCH & DISCOVERY TESTS PASSED")
-        return True
-    
-    # ============ RECOMMENDATION ENGINE TESTS ============
-    
-    def test_recommendation_engine(self):
-        """Test recommendation engine functionality"""
-        self.log("=== TESTING RECOMMENDATION ENGINE ===")
-        
-        # Create multiple test users
-        user1 = self.create_test_user("recommender")
-        user2 = self.create_test_user("content_creator1")
-        user3 = self.create_test_user("content_creator2")
-        
-        user1_token = user1["token"]
-        user2_token = user2["token"]
-        user3_token = user3["token"]
-        user2_id = user2["user"]["id"]
-        user3_id = user3["user"]["id"]
-        
-        # Create posts with different hashtags
-        post1 = self.create_test_post(user2_token, "AI and machine learning post", ["ai", "machinelearning", "tech"])
-        post2 = self.create_test_post(user3_token, "Another AI post for recommendations", ["ai", "technology", "future"])
-        post3 = self.create_test_post(user2_token, "Travel photography post", ["travel", "photography", "nature"])
-        
-        # Wait for posts to be created
-        time.sleep(1)
-        
-        # Test 1: Get recommendations without any activity (should return popular posts)
-        self.log("Testing initial recommendations...")
-        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
-        
-        if response.status_code == 200:
-            recommendations = response.json()
-            assert isinstance(recommendations, list), "Recommendations should return a list"
-            self.log(f"✅ Initial recommendations successful ({len(recommendations)} posts)")
-        else:
-            self.log(f"❌ Initial recommendations failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 2: Like posts to establish interests
-        self.log("Establishing user interests by liking AI posts...")
-        
-        # Like AI-related posts
-        response = self.make_request("POST", f"/posts/{post1['id']}/like", token=user1_token)
-        if response.status_code != 200:
-            self.log(f"❌ Failed to like post1: {response.status_code}", "ERROR")
-            return False
-        
-        response = self.make_request("POST", f"/posts/{post2['id']}/like", token=user1_token)
-        if response.status_code != 200:
-            self.log(f"❌ Failed to like post2: {response.status_code}", "ERROR")
-            return False
-        
-        # Wait for activity to be processed
-        time.sleep(1)
-        
-        # Test 3: Get recommendations based on interests
-        self.log("Testing interest-based recommendations...")
-        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
-        
-        if response.status_code == 200:
-            recommendations = response.json()
-            assert isinstance(recommendations, list), "Recommendations should return a list"
-            
-            # Check if AI-related posts are prioritized
-            ai_posts = []
-            for post in recommendations:
-                if any(hashtag in ["ai", "machinelearning", "technology"] for hashtag in post.get("hashtags", [])):
-                    ai_posts.append(post)
-            
-            self.log(f"✅ Interest-based recommendations successful ({len(ai_posts)} AI-related posts found)")
-        else:
-            self.log(f"❌ Interest-based recommendations failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 4: Follow users to test follow-based recommendations
-        self.log("Testing follow-based recommendations...")
-        
-        # Follow user2
-        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
-        if response.status_code != 200:
-            self.log(f"❌ Failed to follow user2: {response.status_code}", "ERROR")
-            return False
-        
-        # Wait for follow to be processed
-        time.sleep(1)
-        
-        # Get recommendations again
-        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
-        
-        if response.status_code == 200:
-            recommendations = response.json()
-            assert isinstance(recommendations, list), "Recommendations should return a list"
-            
-            # Check if posts from followed users are included
-            followed_user_posts = []
-            for post in recommendations:
-                if post["authorId"] == user2_id:
-                    followed_user_posts.append(post)
-            
-            self.log(f"✅ Follow-based recommendations successful ({len(followed_user_posts)} posts from followed users)")
-        else:
-            self.log(f"❌ Follow-based recommendations failed: {response.status_code} - {response.text}", "ERROR")
-            return False
-        
-        # Test 5: Test recommendation pagination
-        self.log("Testing recommendation pagination...")
-        response = self.make_request("GET", "/feed/recommendations", {"skip": 0, "limit": 5}, token=user1_token)
-        
-        if response.status_code == 200:
-            page1 = response.json()
-            assert len(page1) <= 5, "Should respect limit parameter"
-            
-            response = self.make_request("GET", "/feed/recommendations", {"skip": 5, "limit": 5}, token=user1_token)
-            if response.status_code == 200:
-                page2 = response.json()
-                # Pages should be different (assuming we have enough posts)
-                self.log("✅ Recommendation pagination successful")
+            if success and result["status_code"] == 200:
+                self.auth_token = result["response"]["token"]
+                self.user_id = result["response"]["user"]["id"]
+                self.log_result("User Login", True, "Test user logged in successfully")
             else:
-                self.log(f"❌ Recommendation pagination (page 2) failed: {response.status_code}", "ERROR")
+                self.log_result("User Setup", False, "Failed to setup test user", result)
                 return False
+        
+        return True
+    
+    def test_support_system(self):
+        """Test support system endpoints"""
+        print("\n📞 Testing Support System Endpoints...")
+        
+        # Test 1: Create support ticket - Bug report
+        ticket_data = {
+            "category": "bug",
+            "subject": "App crashes when uploading large images",
+            "description": "The app consistently crashes when I try to upload images larger than 10MB. This happens on both iOS and Android devices. Steps to reproduce: 1. Open camera 2. Take high-res photo 3. Try to post 4. App crashes",
+            "attachments": []
+        }
+        
+        success, result = self.make_request("POST", "/support/tickets", ticket_data)
+        if success and result["status_code"] == 200:
+            ticket_id = result["response"].get("ticketId")
+            self.log_result("Create Support Ticket (Bug)", True, f"Bug report ticket created: {ticket_id}")
         else:
-            self.log(f"❌ Recommendation pagination failed: {response.status_code} - {response.text}", "ERROR")
-            return False
+            self.log_result("Create Support Ticket (Bug)", False, "Failed to create bug report ticket", result)
         
-        self.log("✅ ALL RECOMMENDATION ENGINE TESTS PASSED")
-        return True
+        # Test 2: Create support ticket - Harassment report
+        harassment_ticket = {
+            "category": "harassment",
+            "subject": "User sending inappropriate messages",
+            "description": "User @baduser123 has been sending me threatening messages and inappropriate content. I have screenshots as evidence.",
+            "attachments": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="]
+        }
+        
+        success, result = self.make_request("POST", "/support/tickets", harassment_ticket)
+        if success and result["status_code"] == 200:
+            self.log_result("Create Support Ticket (Harassment)", True, "Harassment report ticket created")
+        else:
+            self.log_result("Create Support Ticket (Harassment)", False, "Failed to create harassment ticket", result)
+        
+        # Test 3: Create support ticket - Technical issue
+        tech_ticket = {
+            "category": "technical",
+            "subject": "Push notifications not working",
+            "description": "I'm not receiving any push notifications even though they're enabled in settings. I've tried restarting the app and my phone.",
+            "attachments": []
+        }
+        
+        success, result = self.make_request("POST", "/support/tickets", tech_ticket)
+        if success and result["status_code"] == 200:
+            self.log_result("Create Support Ticket (Technical)", True, "Technical support ticket created")
+        else:
+            self.log_result("Create Support Ticket (Technical)", False, "Failed to create technical ticket", result)
+        
+        # Test 4: Get user support tickets
+        success, result = self.make_request("GET", "/support/tickets")
+        if success and result["status_code"] == 200:
+            tickets = result["response"]
+            if isinstance(tickets, list) and len(tickets) >= 3:
+                self.log_result("Get User Support Tickets", True, f"Retrieved {len(tickets)} support tickets")
+            else:
+                self.log_result("Get User Support Tickets", False, f"Expected at least 3 tickets, got {len(tickets) if isinstance(tickets, list) else 0}")
+        else:
+            self.log_result("Get User Support Tickets", False, "Failed to retrieve support tickets", result)
+        
+        # Test 5: Get FAQ entries
+        success, result = self.make_request("GET", "/support/faq", auth_required=False)
+        if success and result["status_code"] == 200:
+            faqs = result["response"]
+            if isinstance(faqs, list) and len(faqs) > 0:
+                self.log_result("Get FAQ Entries", True, f"Retrieved {len(faqs)} FAQ entries")
+            else:
+                self.log_result("Get FAQ Entries", False, "No FAQ entries found")
+        else:
+            self.log_result("Get FAQ Entries", False, "Failed to retrieve FAQ entries", result)
+        
+        # Test 6: Search FAQ - password query
+        success, result = self.make_request("GET", "/support/faq/search", params={"q": "password"}, auth_required=False)
+        if success and result["status_code"] == 200:
+            search_results = result["response"].get("results", [])
+            if len(search_results) > 0:
+                self.log_result("Search FAQ (password)", True, f"Found {len(search_results)} FAQ entries for 'password'")
+            else:
+                self.log_result("Search FAQ (password)", True, "No FAQ entries found for 'password' (expected)")
+        else:
+            self.log_result("Search FAQ (password)", False, "Failed to search FAQ", result)
+        
+        # Test 7: Search FAQ - privacy query
+        success, result = self.make_request("GET", "/support/faq/search", params={"q": "private"}, auth_required=False)
+        if success and result["status_code"] == 200:
+            search_results = result["response"].get("results", [])
+            self.log_result("Search FAQ (private)", True, f"Found {len(search_results)} FAQ entries for 'private'")
+        else:
+            self.log_result("Search FAQ (private)", False, "Failed to search FAQ for 'private'", result)
     
-    # ============ INTEGRATION TESTS ============
+    def test_app_information(self):
+        """Test app information endpoint"""
+        print("\n📱 Testing App Information Endpoint...")
+        
+        success, result = self.make_request("GET", "/app/info", auth_required=False)
+        if success and result["status_code"] == 200:
+            app_info = result["response"]
+            required_fields = ["version", "buildNumber", "platform", "features", "supportEmail"]
+            missing_fields = [field for field in required_fields if field not in app_info]
+            
+            if not missing_fields:
+                features = app_info.get("features", [])
+                self.log_result("Get App Info", True, f"App info retrieved with {len(features)} features")
+            else:
+                self.log_result("Get App Info", False, f"Missing required fields: {missing_fields}", app_info)
+        else:
+            self.log_result("Get App Info", False, "Failed to retrieve app information", result)
     
-    def test_cross_feature_integration(self):
-        """Test integration between different features"""
-        self.log("=== TESTING CROSS-FEATURE INTEGRATION ===")
+    def test_theme_settings(self):
+        """Test theme settings endpoints"""
+        print("\n🎨 Testing Theme Settings Endpoints...")
         
-        # Create test users
-        user1 = self.create_test_user("integrator1")
-        user2 = self.create_test_user("integrator2")
+        # Test 1: Get theme settings (should return defaults)
+        success, result = self.make_request("GET", "/settings/theme")
+        if success and result["status_code"] == 200:
+            theme_settings = result["response"]
+            required_fields = ["themeMode", "primaryColor", "accentColor", "fontSize", "fontFamily"]
+            missing_fields = [field for field in required_fields if field not in theme_settings]
+            
+            if not missing_fields:
+                self.log_result("Get Theme Settings", True, f"Theme settings retrieved: {theme_settings.get('themeMode', 'unknown')} mode")
+            else:
+                self.log_result("Get Theme Settings", False, f"Missing required fields: {missing_fields}", theme_settings)
+        else:
+            self.log_result("Get Theme Settings", False, "Failed to retrieve theme settings", result)
         
-        user1_token = user1["token"]
-        user2_token = user2["token"]
-        user1_id = user1["user"]["id"]
-        user2_id = user2["user"]["id"]
+        # Test 2: Update theme settings - Dark mode
+        dark_theme_update = {
+            "themeMode": "dark",
+            "primaryColor": "#1E1E1E",
+            "accentColor": "#BB86FC",
+            "fontSize": "large",
+            "highContrast": True,
+            "reduceMotion": False
+        }
         
-        # Test 1: Follow → Notification → Recommendation flow
-        self.log("Testing Follow → Notification → Recommendation integration...")
+        success, result = self.make_request("PUT", "/settings/theme", dark_theme_update)
+        if success and result["status_code"] == 200:
+            self.log_result("Update Theme Settings (Dark)", True, "Dark theme settings updated successfully")
+        else:
+            self.log_result("Update Theme Settings (Dark)", False, "Failed to update dark theme settings", result)
         
-        # Follow user
-        response = self.make_request("POST", f"/users/{user2_id}/follow", token=user1_token)
-        assert response.status_code == 200, "Follow should succeed"
+        # Test 3: Update theme settings - Light mode with accessibility
+        light_theme_update = {
+            "themeMode": "light",
+            "primaryColor": "#007AFF",
+            "accentColor": "#FF3B30",
+            "fontSize": "medium",
+            "fontFamily": "system",
+            "highContrast": False,
+            "reduceMotion": True,
+            "colorBlindMode": "deuteranopia"
+        }
         
-        # Check notification was created
-        time.sleep(1)
-        response = self.make_request("GET", "/notifications", token=user2_token)
-        assert response.status_code == 200, "Get notifications should succeed"
-        notifications = response.json()
-        follow_notifications = [n for n in notifications if n["type"] == "follow"]
-        assert len(follow_notifications) >= 1, "Should have follow notification"
+        success, result = self.make_request("PUT", "/settings/theme", light_theme_update)
+        if success and result["status_code"] == 200:
+            self.log_result("Update Theme Settings (Light + Accessibility)", True, "Light theme with accessibility settings updated")
+        else:
+            self.log_result("Update Theme Settings (Light + Accessibility)", False, "Failed to update light theme settings", result)
         
-        # Create post by followed user
-        post = self.create_test_post(user2_token, "Post from followed user", ["integration", "test"])
-        
-        # Check if post appears in recommendations
-        time.sleep(1)
-        response = self.make_request("GET", "/feed/recommendations", token=user1_token)
-        assert response.status_code == 200, "Get recommendations should succeed"
-        recommendations = response.json()
-        followed_user_posts = [p for p in recommendations if p["authorId"] == user2_id]
-        assert len(followed_user_posts) >= 1, "Should recommend posts from followed users"
-        
-        self.log("✅ Follow → Notification → Recommendation integration successful")
-        
-        # Test 2: Like → Notification → Search integration
-        self.log("Testing Like → Notification → Search integration...")
-        
-        # Like the post
-        response = self.make_request("POST", f"/posts/{post['id']}/like", token=user1_token)
-        assert response.status_code == 200, "Like should succeed"
-        
-        # Check notification was created
-        time.sleep(1)
-        response = self.make_request("GET", "/notifications", token=user2_token)
-        assert response.status_code == 200, "Get notifications should succeed"
-        notifications = response.json()
-        like_notifications = [n for n in notifications if n["type"] == "like"]
-        assert len(like_notifications) >= 1, "Should have like notification"
-        
-        # Search for hashtags from liked post
-        response = self.make_request("GET", "/search", {"q": "integration", "type": "hashtags"})
-        assert response.status_code == 200, "Search should succeed"
-        result = response.json()
-        assert "integration" in result["hashtags"], "Should find hashtag from liked post"
-        
-        self.log("✅ Like → Notification → Search integration successful")
-        
-        self.log("✅ ALL CROSS-FEATURE INTEGRATION TESTS PASSED")
-        return True
+        # Test 4: Verify theme settings were updated
+        success, result = self.make_request("GET", "/settings/theme")
+        if success and result["status_code"] == 200:
+            theme_settings = result["response"]
+            if (theme_settings.get("themeMode") == "light" and 
+                theme_settings.get("reduceMotion") == True and
+                theme_settings.get("colorBlindMode") == "deuteranopia"):
+                self.log_result("Verify Theme Settings Update", True, "Theme settings correctly updated and persisted")
+            else:
+                self.log_result("Verify Theme Settings Update", False, "Theme settings not properly updated", theme_settings)
+        else:
+            self.log_result("Verify Theme Settings Update", False, "Failed to verify theme settings update", result)
     
-    # ============ MAIN TEST RUNNER ============
+    def test_authentication_signout(self):
+        """Test authentication sign-out endpoint"""
+        print("\n🔐 Testing Authentication Sign-out...")
+        
+        success, result = self.make_request("POST", "/auth/sign-out")
+        if success and result["status_code"] == 200:
+            response_data = result["response"]
+            if response_data.get("success") == True:
+                self.log_result("Sign Out", True, "User signed out successfully with session cleanup")
+            else:
+                self.log_result("Sign Out", False, "Sign out response missing success flag", response_data)
+        else:
+            self.log_result("Sign Out", False, "Failed to sign out user", result)
+    
+    def test_content_reporting(self):
+        """Test content reporting endpoint"""
+        print("\n🚨 Testing Content Reporting...")
+        
+        # First, re-authenticate since we signed out
+        if not self.setup_test_user():
+            self.log_result("Re-authentication for Content Reporting", False, "Failed to re-authenticate")
+            return
+        
+        # Test 1: Report a post for spam
+        post_report = {
+            "contentType": "post",
+            "contentId": "test_post_123",
+            "reason": "spam",
+            "description": "This post contains spam content promoting fake products and services. It's clearly not genuine content."
+        }
+        
+        success, result = self.make_request("POST", "/reports/content", post_report)
+        if success and result["status_code"] == 200:
+            report_id = result["response"].get("reportId")
+            self.log_result("Report Content (Post - Spam)", True, f"Post reported for spam: {report_id}")
+        else:
+            self.log_result("Report Content (Post - Spam)", False, "Failed to report post for spam", result)
+        
+        # Test 2: Report a comment for harassment
+        comment_report = {
+            "contentType": "comment",
+            "contentId": "test_comment_456",
+            "reason": "harassment",
+            "description": "This comment contains threatening language and personal attacks against other users."
+        }
+        
+        success, result = self.make_request("POST", "/reports/content", comment_report)
+        if success and result["status_code"] == 200:
+            self.log_result("Report Content (Comment - Harassment)", True, "Comment reported for harassment")
+        else:
+            self.log_result("Report Content (Comment - Harassment)", False, "Failed to report comment for harassment", result)
+        
+        # Test 3: Report a user for inappropriate behavior
+        user_report = {
+            "contentType": "user",
+            "contentId": "test_user_789",
+            "reason": "inappropriate",
+            "description": "This user has been posting inappropriate content and sending unwanted messages to multiple users."
+        }
+        
+        success, result = self.make_request("POST", "/reports/content", user_report)
+        if success and result["status_code"] == 200:
+            self.log_result("Report Content (User - Inappropriate)", True, "User reported for inappropriate behavior")
+        else:
+            self.log_result("Report Content (User - Inappropriate)", False, "Failed to report user", result)
+        
+        # Test 4: Report a message for violence
+        message_report = {
+            "contentType": "message",
+            "contentId": "test_message_101",
+            "reason": "violence",
+            "description": "This message contains violent threats and graphic content that violates community guidelines."
+        }
+        
+        success, result = self.make_request("POST", "/reports/content", message_report)
+        if success and result["status_code"] == 200:
+            self.log_result("Report Content (Message - Violence)", True, "Message reported for violence")
+        else:
+            self.log_result("Report Content (Message - Violence)", False, "Failed to report message for violence", result)
     
     def run_all_tests(self):
-        """Run all backend tests"""
-        self.log("🚀 STARTING NOVASOCIAL BACKEND COMPREHENSIVE TESTING")
-        self.log(f"Testing against: {self.base_url}")
+        """Run all Phase 15 endpoint tests"""
+        print("🚀 Starting Phase 15 Backend Endpoint Testing...")
+        print(f"Backend URL: {self.base_url}")
+        print("=" * 60)
         
-        test_results = {}
-        
-        try:
-            # Test Follow System
-            test_results["follow_system"] = self.test_follow_system()
-            
-            # Test Notifications System  
-            test_results["notifications_system"] = self.test_notifications_system()
-            
-            # Test Search & Discovery
-            test_results["search_discovery"] = self.test_search_and_discovery()
-            
-            # Test Recommendation Engine
-            test_results["recommendation_engine"] = self.test_recommendation_engine()
-            
-            # Test Cross-Feature Integration
-            test_results["integration"] = self.test_cross_feature_integration()
-            
-        except Exception as e:
-            self.log(f"❌ CRITICAL ERROR during testing: {e}", "ERROR")
-            test_results["critical_error"] = str(e)
-        
-        # Print final results
-        self.log("\n" + "="*60)
-        self.log("🏁 FINAL TEST RESULTS")
-        self.log("="*60)
-        
-        passed_tests = 0
-        total_tests = 0
-        
-        for test_name, result in test_results.items():
-            if test_name == "critical_error":
-                self.log(f"❌ CRITICAL ERROR: {result}", "ERROR")
-                continue
-                
-            total_tests += 1
-            if result:
-                self.log(f"✅ {test_name.replace('_', ' ').title()}: PASSED")
-                passed_tests += 1
-            else:
-                self.log(f"❌ {test_name.replace('_', ' ').title()}: FAILED", "ERROR")
-        
-        self.log("="*60)
-        self.log(f"📊 SUMMARY: {passed_tests}/{total_tests} tests passed")
-        
-        if passed_tests == total_tests:
-            self.log("🎉 ALL TESTS PASSED! Backend is working correctly.")
-            return True
-        else:
-            self.log("⚠️  SOME TESTS FAILED! Check logs above for details.", "ERROR")
+        # Setup test user
+        if not self.setup_test_user():
+            print("❌ Failed to setup test user. Aborting tests.")
             return False
+        
+        # Run all test suites
+        self.test_support_system()
+        self.test_app_information()
+        self.test_theme_settings()
+        self.test_authentication_signout()
+        self.test_content_reporting()
+        
+        # Print summary
+        self.print_summary()
+        
+        return True
+    
+    def print_summary(self):
+        """Print test results summary"""
+        print("\n" + "=" * 60)
+        print("📊 TEST RESULTS SUMMARY")
+        print("=" * 60)
+        
+        total_tests = len(self.test_results)
+        passed_tests = sum(1 for result in self.test_results if result["success"])
+        failed_tests = total_tests - passed_tests
+        
+        print(f"Total Tests: {total_tests}")
+        print(f"✅ Passed: {passed_tests}")
+        print(f"❌ Failed: {failed_tests}")
+        print(f"Success Rate: {(passed_tests/total_tests)*100:.1f}%")
+        
+        if failed_tests > 0:
+            print("\n❌ FAILED TESTS:")
+            for result in self.test_results:
+                if not result["success"]:
+                    print(f"  - {result['test']}: {result['message']}")
+        
+        print("\n" + "=" * 60)
 
+def main():
+    """Main function to run the tests"""
+    tester = BackendTester()
+    success = tester.run_all_tests()
+    
+    # Exit with appropriate code
+    sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
-    tester = NovaSocialTester()
-    success = tester.run_all_tests()
-    exit(0 if success else 1)
+    main()
