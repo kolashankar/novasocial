@@ -24,6 +24,19 @@ export const ConversationsList: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // Phase 14 - Enhanced Messaging Features
+  const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'groups' | 'direct'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+  const [userStatuses, setUserStatuses] = useState<Record<string, { isOnline: boolean; lastSeen: string }>>({});
+
+  const filters = [
+    { key: 'all', label: 'All', icon: 'chatbubbles-outline' },
+    { key: 'unread', label: 'Unread', icon: 'radio-button-on-outline' },
+    { key: 'groups', label: 'Groups', icon: 'people-outline' },
+    { key: 'direct', label: 'Direct', icon: 'person-outline' },
+  ];
 
   const loadConversations = useCallback(async () => {
     try {
