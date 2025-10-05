@@ -52,42 +52,50 @@ class BackendTester:
             print(f"    Error: {error_msg}")
         print()
     
-    def setup_test_user(self):
-        """Setup test user for authentication"""
-        print("\n🔧 Setting up test user...")
+    def setup_auth(self):
+        """Register and login test user"""
+        print("🔐 Setting up authentication...")
         
-        # Try to register user (might already exist)
-        register_data = {
-            "fullName": TEST_USER_FULLNAME,
-            "username": TEST_USER_USERNAME,
-            "email": TEST_USER_EMAIL,
-            "password": TEST_USER_PASSWORD
-        }
-        
-        success, result = self.make_request("POST", "/auth/register", register_data, auth_required=False)
-        
-        if success and result["status_code"] == 200:
-            self.auth_token = result["response"]["token"]
-            self.user_id = result["response"]["user"]["id"]
-            self.log_result("User Registration", True, "Test user registered successfully")
-        else:
-            # User might already exist, try login
-            login_data = {
-                "email": TEST_USER_EMAIL,
-                "password": TEST_USER_PASSWORD
-            }
+        # Register user
+        try:
+            register_response = self.session.post(
+                f"{BACKEND_URL}/auth/register",
+                json=TEST_USER_DATA,
+                headers={"Content-Type": "application/json"}
+            )
             
-            success, result = self.make_request("POST", "/auth/login", login_data, auth_required=False)
-            
-            if success and result["status_code"] == 200:
-                self.auth_token = result["response"]["token"]
-                self.user_id = result["response"]["user"]["id"]
-                self.log_result("User Login", True, "Test user logged in successfully")
+            if register_response.status_code == 201 or register_response.status_code == 200:
+                data = register_response.json()
+                self.auth_token = data.get("token")
+                self.user_id = data.get("user", {}).get("id")
+                self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
+                self.log_result("User Registration", True, f"User ID: {self.user_id}")
+                return True
+            elif register_response.status_code == 400 and "already" in register_response.text.lower():
+                # User exists, try login
+                login_response = self.session.post(
+                    f"{BACKEND_URL}/auth/login",
+                    json={"email": TEST_USER_DATA["email"], "password": TEST_USER_DATA["password"]},
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if login_response.status_code == 200:
+                    data = login_response.json()
+                    self.auth_token = data.get("token")
+                    self.user_id = data.get("user", {}).get("id")
+                    self.session.headers.update({"Authorization": f"Bearer {self.auth_token}"})
+                    self.log_result("User Login", True, f"User ID: {self.user_id}")
+                    return True
+                else:
+                    self.log_result("User Login", False, "", f"Status: {login_response.status_code}, Response: {login_response.text}")
+                    return False
             else:
-                self.log_result("User Setup", False, "Failed to setup test user", result)
+                self.log_result("User Registration", False, "", f"Status: {register_response.status_code}, Response: {register_response.text}")
                 return False
-        
-        return True
+                
+        except Exception as e:
+            self.log_result("Authentication Setup", False, "", str(e))
+            return False
     
     def test_support_system(self):
         """Test support system endpoints"""
