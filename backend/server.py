@@ -3171,6 +3171,397 @@ logger = logging.getLogger(__name__)
 async def shutdown_db_client():
     client.close()
 
+# PHASE 16: POSTING & MEDIA ENHANCEMENTS ENDPOINTS
+
+from models.posting_models import (
+    PostTag, LocationTag, UserTag, StoryReel, PostCreate, 
+    LocationSearchResult, TagSearchResult, UploadProgress,
+    MediaCompression, StoryReelCreate, TagValidation, PrivacyCheck
+)
+import json
+import re
+
+# Mock location service (replace with real API later)
+MOCK_LOCATIONS = [
+    {
+        "id": "loc_1",
+        "name": "Central Park",
+        "displayName": "Central Park, New York",
+        "address": "Central Park, New York, NY 10024, USA",
+        "coordinates": {"lat": 40.785091, "lng": -73.968285},
+        "category": "park",
+        "city": "New York",
+        "country": "USA"
+    },
+    {
+        "id": "loc_2", 
+        "name": "Times Square",
+        "displayName": "Times Square, New York",
+        "address": "Times Square, New York, NY 10036, USA",
+        "coordinates": {"lat": 40.758896, "lng": -73.985130},
+        "category": "landmark",
+        "city": "New York",
+        "country": "USA"
+    },
+    {
+        "id": "loc_3",
+        "name": "Golden Gate Bridge", 
+        "displayName": "Golden Gate Bridge, San Francisco",
+        "address": "Golden Gate Bridge, San Francisco, CA, USA",
+        "coordinates": {"lat": 37.819929, "lng": -122.478255},
+        "category": "landmark",
+        "city": "San Francisco", 
+        "country": "USA"
+    }
+]
+
+@api_router.get("/search/tags")
+async def search_tags(
+    q: str,
+    type: Optional[str] = None,  # "users", "locations", "all"
+    current_user = Depends(get_current_user),
+    limit: int = 10
+):
+    """Search for users and locations to tag"""
+    if not q or len(q.strip()) < 2:
+        return TagSearchResult(users=[], locations=[])
+    
+    query_lower = q.lower()
+    results = TagSearchResult(users=[], locations=[])
+    
+    # Search users
+    if type != "locations":
+        users = await db.users.find({
+            "$or": [
+                {"username": {"$regex": query_lower, "$options": "i"}},
+                {"fullName": {"$regex": query_lower, "$options": "i"}}
+            ]
+        }).limit(limit).to_list(limit)
+        
+        results.users = [
+            UserResponse(**{k: v for k, v in user.items() if k != "password"}) 
+            for user in users if user["id"] != current_user["id"]
+        ]
+    
+    # Search locations (mock data)
+    if type != "users":
+        matching_locations = [
+            loc for loc in MOCK_LOCATIONS
+            if query_lower in loc["name"].lower() or 
+               query_lower in loc["displayName"].lower() or
+               query_lower in loc["address"].lower()
+        ]
+        
+        results.locations = [
+            LocationSearchResult(**loc) for loc in matching_locations[:limit]
+        ]
+    
+    return results
+
+@api_router.post("/posts/enhanced", response_model=dict)
+async def create_enhanced_post(
+    post_data: PostCreate, 
+    current_user = Depends(get_current_user)
+):
+    """Create post with tagging and location features"""
+    post_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    # Validate tags (max 10 people)
+    if post_data.taggedUsers and len(post_data.taggedUsers) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 people can be tagged")
+    
+    # Create the post
+    new_post = {
+        "id": post_id,
+        "authorId": current_user["id"],
+        "caption": post_data.caption,
+        "media": post_data.media,
+        "mediaTypes": post_data.mediaTypes,
+        "hashtags": post_data.hashtags or [],
+        "taggedUsers": post_data.taggedUsers or [],
+        "location": post_data.location,
+        "likes": [],
+        "likesCount": 0,
+        "commentsCount": 0,
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    await db.posts.insert_one(new_post)
+    
+    # Create user tags
+    if post_data.taggedUsers:
+        for tag_data in post_data.taggedUsers:
+            # Check privacy - if tagged user has private account, create pending tag
+            tagged_user = await db.users.find_one({"id": tag_data["userId"]})
+            if tagged_user:
+                user_tag = {
+                    "id": str(uuid.uuid4()),
+                    "postId": post_id,
+                    "taggerId": current_user["id"],
+                    "taggedUserId": tag_data["userId"],
+                    "position": tag_data.get("position"),
+                    "isApproved": True,  # Auto-approve for now, implement privacy later
+                    "createdAt": now
+                }
+                await db.user_tags.insert_one(user_tag)
+                
+                # Create notification for tagged user
+                notification = {
+                    "id": str(uuid.uuid4()),
+                    "type": "tag",
+                    "senderId": current_user["id"],
+                    "recipientId": tag_data["userId"],
+                    "relatedId": post_id,
+                    "content": f"{current_user['username']} tagged you in a post",
+                    "isRead": False,
+                    "createdAt": now
+                }
+                await db.notifications.insert_one(notification)
+    
+    # Create location tag
+    if post_data.location:
+        location_tag = {
+            "id": str(uuid.uuid4()),
+            "postId": post_id,
+            "tagType": "location",
+            "locationId": post_data.location.get("id"),
+            "locationName": post_data.location.get("name"),
+            "locationCoordinates": post_data.location.get("coordinates"),
+            "createdAt": now
+        }
+        await db.post_tags.insert_one(location_tag)
+    
+    return {
+        "success": True,
+        "postId": post_id,
+        "message": "Post created successfully with tags"
+    }
+
+@api_router.get("/locations/{location_id}/posts", response_model=List[PostResponse])
+async def get_posts_by_location(
+    location_id: str,
+    current_user = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 20
+):
+    """Get all posts tagged at a specific location"""
+    # Find posts with this location tag
+    location_tags = await db.post_tags.find({
+        "locationId": location_id,
+        "tagType": "location"
+    }).skip(skip).limit(limit).to_list(limit)
+    
+    if not location_tags:
+        return []
+    
+    post_ids = [tag["postId"] for tag in location_tags]
+    posts = await db.posts.find({"id": {"$in": post_ids}}).to_list(len(post_ids))
+    
+    # Get authors
+    author_ids = list(set(post["authorId"] for post in posts))
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids)) if author_ids else []
+    authors_map = {author["id"]: author for author in authors}
+    
+    result = []
+    for post in posts:
+        author_data = authors_map.get(post["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(PostResponse(**post, author=author, comments=[]))
+    
+    return result
+
+@api_router.post("/stories/enhanced", response_model=dict)
+async def create_enhanced_story_reel(
+    story_data: StoryReelCreate,
+    current_user = Depends(get_current_user)
+):
+    """Create story/reel with enhanced features and retry logic"""
+    story_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    # Set expiration for stories (24 hours)
+    expires_at = None
+    if story_data.contentType in ["story", "story_reel"]:
+        expires_at = story_data.expiresAt or datetime.utcnow() + timedelta(hours=24)
+    
+    # Create story/reel
+    new_story_reel = {
+        "id": story_id,
+        "authorId": current_user["id"],
+        "contentType": story_data.contentType,
+        "media": story_data.media,
+        "mediaType": story_data.mediaType,
+        "duration": story_data.duration,
+        "text": story_data.text,
+        "textPosition": story_data.textPosition,
+        "textStyle": story_data.textStyle,
+        "music": story_data.music,
+        "effects": story_data.effects or [],
+        "tags": story_data.tags or [],
+        "stickers": story_data.stickers or [],
+        "viewers": [],
+        "viewersCount": 0,
+        "likesCount": 0,
+        "likes": [],
+        "commentsCount": 0,
+        "isHighlight": False,
+        "expiresAt": expires_at,
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    # Store in appropriate collection based on type
+    if story_data.contentType == "reel":
+        await db.reels.insert_one(new_story_reel)
+    else:
+        await db.stories.insert_one(new_story_reel)
+    
+    # Create upload progress record
+    progress_record = {
+        "id": str(uuid.uuid4()),
+        "userId": current_user["id"],
+        "fileName": f"{story_data.contentType}_{story_id}",
+        "totalSize": len(story_data.media) if story_data.media else 0,
+        "uploadedSize": len(story_data.media) if story_data.media else 0,
+        "progress": 100.0,
+        "status": "completed",
+        "retryCount": 0,
+        "maxRetries": 3,
+        "createdAt": now,
+        "updatedAt": now
+    }
+    await db.upload_progress.insert_one(progress_record)
+    
+    return {
+        "success": True,
+        "storyId": story_id,
+        "contentType": story_data.contentType,
+        "uploadProgress": progress_record,
+        "message": f"{story_data.contentType.title()} created successfully"
+    }
+
+@api_router.get("/upload/progress/{upload_id}", response_model=UploadProgress)
+async def get_upload_progress(
+    upload_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get upload progress for media uploads"""
+    progress = await db.upload_progress.find_one({
+        "id": upload_id,
+        "userId": current_user["id"]
+    })
+    
+    if not progress:
+        raise HTTPException(status_code=404, detail="Upload progress not found")
+    
+    return UploadProgress(**progress)
+
+@api_router.post("/upload/retry/{upload_id}")
+async def retry_upload(
+    upload_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Retry failed upload"""
+    progress = await db.upload_progress.find_one({
+        "id": upload_id,
+        "userId": current_user["id"]
+    })
+    
+    if not progress:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    
+    if progress["status"] != "failed":
+        raise HTTPException(status_code=400, detail="Upload is not in failed state")
+    
+    if progress["retryCount"] >= progress["maxRetries"]:
+        raise HTTPException(status_code=400, detail="Maximum retry attempts exceeded")
+    
+    # Update retry count and status
+    await db.upload_progress.update_one(
+        {"id": upload_id},
+        {
+            "$set": {
+                "status": "uploading",
+                "retryCount": progress["retryCount"] + 1,
+                "updatedAt": datetime.utcnow()
+            }
+        }
+    )
+    
+    return {"success": True, "message": "Upload retry initiated"}
+
+@api_router.post("/posts/validate-tags")
+async def validate_post_tags(
+    post_id: str,
+    tagged_user_ids: List[str],
+    location_id: Optional[str] = None,
+    current_user = Depends(get_current_user)
+):
+    """Validate tags before posting"""
+    validation = TagValidation(
+        postId=post_id,
+        taggedUserIds=tagged_user_ids,
+        locationId=location_id,
+        isValid=True,
+        errors=[],
+        warnings=[]
+    )
+    
+    # Check maximum users limit
+    if len(tagged_user_ids) > 10:
+        validation.isValid = False
+        validation.errors.append("Cannot tag more than 10 users in a single post")
+    
+    # Check if users exist and privacy settings
+    for user_id in tagged_user_ids:
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            validation.isValid = False
+            validation.errors.append(f"User {user_id} not found")
+        else:
+            # Check if user has blocked the current user
+            # (This would be implemented with actual privacy settings)
+            pass
+    
+    # Validate location if provided
+    if location_id:
+        # Check if location exists in our mock data
+        location_exists = any(loc["id"] == location_id for loc in MOCK_LOCATIONS)
+        if not location_exists:
+            validation.warnings.append("Location not found in database")
+    
+    return validation
+
+@api_router.post("/privacy/check")
+async def check_privacy_permissions(
+    target_user_id: str,
+    action: str,  # "tag", "mention", "view_post"
+    current_user = Depends(get_current_user)
+):
+    """Check if current user can perform action on target user"""
+    
+    # Get target user
+    target_user = await db.users.find_one({"id": target_user_id})
+    if not target_user:
+        return PrivacyCheck(
+            userId=current_user["id"],
+            targetUserId=target_user_id,
+            action=action,
+            isAllowed=False,
+            reason="User not found"
+        )
+    
+    # For now, allow all actions (implement proper privacy rules later)
+    return PrivacyCheck(
+        userId=current_user["id"],
+        targetUserId=target_user_id,
+        action=action,
+        isAllowed=True
+    )
+
 # Export the Socket.IO ASGI app for uvicorn
 # This enables Socket.IO functionality
 if __name__ == "__main__":
