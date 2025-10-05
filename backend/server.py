@@ -2812,10 +2812,311 @@ async def get_user_stats(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching user stats: {str(e)}")
 
+# PHASE 15: UI/UX & ACCESSIBILITY IMPROVEMENTS ENDPOINTS
+
+class SupportTicketCreate(BaseModel):
+    category: str  # "bug", "feature_request", "account_issue", "harassment", "technical", "other"
+    subject: str
+    description: str
+    attachments: Optional[List[str]] = []  # Base64 images/files
+
+class ThemeSettingsUpdate(BaseModel):
+    themeMode: Optional[str] = None  # "light", "dark", "system"
+    primaryColor: Optional[str] = None
+    accentColor: Optional[str] = None
+    fontSize: Optional[str] = None
+    fontFamily: Optional[str] = None
+    highContrast: Optional[bool] = None
+    reduceMotion: Optional[bool] = None
+    colorBlindMode: Optional[str] = None
+
+@api_router.post("/support/tickets", response_model=dict)
+async def create_support_ticket(ticket_data: SupportTicketCreate, current_user = Depends(get_current_user)):
+    """Create a new support ticket"""
+    ticket_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_ticket = {
+        "id": ticket_id,
+        "userId": current_user["id"],
+        "user": {k: v for k, v in current_user.items() if k != "password"},
+        "category": ticket_data.category,
+        "subject": ticket_data.subject,
+        "description": ticket_data.description,
+        "priority": "medium",
+        "status": "open",
+        "attachments": ticket_data.attachments or [],
+        "assignedTo": None,
+        "tags": [],
+        "createdAt": now,
+        "updatedAt": now,
+        "resolvedAt": None
+    }
+    
+    await db.support_tickets.insert_one(new_ticket)
+    
+    return {
+        "success": True,
+        "message": "Support ticket created successfully",
+        "ticketId": ticket_id,
+        "ticket": new_ticket
+    }
+
+@api_router.get("/support/tickets", response_model=List[dict])
+async def get_user_support_tickets(current_user = Depends(get_current_user), skip: int = 0, limit: int = 50):
+    """Get user's support tickets"""
+    tickets = await db.support_tickets.find({
+        "userId": current_user["id"]
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    return tickets
+
+@api_router.get("/support/faq", response_model=List[dict])
+async def get_faq():
+    """Get FAQ entries"""
+    faqs = await db.faqs.find({"isActive": True}).sort("order", 1).to_list(None)
+    
+    if not faqs:
+        # Return default FAQs if none exist
+        default_faqs = [
+            {
+                "id": "faq_1",
+                "category": "account",
+                "question": "How do I reset my password?",
+                "answer": "Go to the login screen and tap 'Forgot Password'. Enter your email and follow the instructions sent to your inbox.",
+                "keywords": ["password", "reset", "forgot", "login"],
+                "isActive": True,
+                "order": 1,
+                "views": 0,
+                "helpful": 0,
+                "notHelpful": 0,
+                "createdAt": datetime.utcnow(),
+                "updatedAt": datetime.utcnow()
+            },
+            {
+                "id": "faq_2",
+                "category": "privacy",
+                "question": "How do I make my account private?",
+                "answer": "Go to Settings > Privacy and toggle 'Private Account'. When your account is private, only approved followers can see your posts.",
+                "keywords": ["private", "account", "privacy", "followers"],
+                "isActive": True,
+                "order": 2,
+                "views": 0,
+                "helpful": 0,
+                "notHelpful": 0,
+                "createdAt": datetime.utcnow(),
+                "updatedAt": datetime.utcnow()
+            },
+            {
+                "id": "faq_3",
+                "category": "posting",
+                "question": "How many photos can I post at once?",
+                "answer": "You can share up to 10 photos or videos in a single post. Select multiple media items when creating your post.",
+                "keywords": ["photos", "videos", "posting", "multiple", "limit"],
+                "isActive": True,
+                "order": 3,
+                "views": 0,
+                "helpful": 0,
+                "notHelpful": 0,
+                "createdAt": datetime.utcnow(),
+                "updatedAt": datetime.utcnow()
+            }
+        ]
+        return default_faqs
+    
+    return faqs
+
+@api_router.get("/support/faq/search")
+async def search_faq(q: str):
+    """Search FAQ entries"""
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+    
+    # Search in questions, answers, and keywords
+    results = await db.faqs.find({
+        "$and": [
+            {"isActive": True},
+            {
+                "$or": [
+                    {"question": {"$regex": q, "$options": "i"}},
+                    {"answer": {"$regex": q, "$options": "i"}},
+                    {"keywords": {"$regex": q, "$options": "i"}}
+                ]
+            }
+        ]
+    }).to_list(None)
+    
+    return {"results": results}
+
+@api_router.get("/app/info")
+async def get_app_info():
+    """Get app information for About screen"""
+    return {
+        "version": "1.0.0",
+        "buildNumber": "100",
+        "releaseDate": datetime.utcnow(),
+        "platform": "mobile",
+        "minOSVersion": "iOS 12.0 / Android 6.0",
+        "features": [
+            "Photo & Video Sharing",
+            "Stories",
+            "Direct Messaging",
+            "Live Chat",
+            "Reels",
+            "Push Notifications",
+            "Dark Mode"
+        ],
+        "privacyPolicyUrl": "https://novasocial.app/privacy",
+        "termsOfServiceUrl": "https://novasocial.app/terms",
+        "supportEmail": "support@novasocial.app",
+        "website": "https://novasocial.app"
+    }
+
+@api_router.get("/settings/theme", response_model=dict)
+async def get_theme_settings(current_user = Depends(get_current_user)):
+    """Get user's theme settings"""
+    settings = await db.user_theme_settings.find_one({"userId": current_user["id"]})
+    
+    if not settings:
+        # Return default theme settings
+        default_settings = {
+            "userId": current_user["id"],
+            "themeMode": "system",
+            "primaryColor": "#007AFF",
+            "accentColor": "#FF3B30",
+            "fontSize": "medium",
+            "fontFamily": "system",
+            "highContrast": False,
+            "reduceMotion": False,
+            "colorBlindMode": None,
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
+        }
+        return default_settings
+    
+    return settings
+
+@api_router.put("/settings/theme")
+async def update_theme_settings(
+    theme_data: ThemeSettingsUpdate,
+    current_user = Depends(get_current_user)
+):
+    """Update user's theme settings"""
+    now = datetime.utcnow()
+    
+    # Get current settings or create new
+    current_settings = await db.user_theme_settings.find_one({"userId": current_user["id"]})
+    
+    if current_settings:
+        # Update existing settings
+        update_data = {}
+        if theme_data.themeMode is not None:
+            update_data["themeMode"] = theme_data.themeMode
+        if theme_data.primaryColor is not None:
+            update_data["primaryColor"] = theme_data.primaryColor
+        if theme_data.accentColor is not None:
+            update_data["accentColor"] = theme_data.accentColor
+        if theme_data.fontSize is not None:
+            update_data["fontSize"] = theme_data.fontSize
+        if theme_data.fontFamily is not None:
+            update_data["fontFamily"] = theme_data.fontFamily
+        if theme_data.highContrast is not None:
+            update_data["highContrast"] = theme_data.highContrast
+        if theme_data.reduceMotion is not None:
+            update_data["reduceMotion"] = theme_data.reduceMotion
+        if theme_data.colorBlindMode is not None:
+            update_data["colorBlindMode"] = theme_data.colorBlindMode
+        
+        update_data["updatedAt"] = now
+        
+        await db.user_theme_settings.update_one(
+            {"userId": current_user["id"]},
+            {"$set": update_data}
+        )
+    else:
+        # Create new settings
+        new_settings = {
+            "userId": current_user["id"],
+            "themeMode": theme_data.themeMode or "system",
+            "primaryColor": theme_data.primaryColor or "#007AFF",
+            "accentColor": theme_data.accentColor or "#FF3B30",
+            "fontSize": theme_data.fontSize or "medium",
+            "fontFamily": theme_data.fontFamily or "system",
+            "highContrast": theme_data.highContrast or False,
+            "reduceMotion": theme_data.reduceMotion or False,
+            "colorBlindMode": theme_data.colorBlindMode,
+            "createdAt": now,
+            "updatedAt": now
+        }
+        
+        await db.user_theme_settings.insert_one(new_settings)
+    
+    return {"success": True, "message": "Theme settings updated successfully"}
+
+@api_router.post("/auth/sign-out")
+async def sign_out(current_user = Depends(get_current_user)):
+    """Sign out user with session cleanup"""
+    now = datetime.utcnow()
+    
+    # Update user activity status to offline
+    await db.user_activities.update_one(
+        {"userId": current_user["id"]},
+        {
+            "$set": {
+                "status": "offline",
+                "lastSeen": now,
+                "updatedAt": now
+            }
+        },
+        upsert=True
+    )
+    
+    # Log security event
+    audit_log = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user["id"],
+        "event_type": "SIGN_OUT",
+        "timestamp": now,
+        "metadata": {"email": current_user["email"]}
+    }
+    await db.security_audit_logs.insert_one(audit_log)
+    
+    return {
+        "success": True,
+        "message": "Successfully signed out"
+    }
+
+@api_router.post("/reports/content")
+async def report_content(report_data: ReportedContent, current_user = Depends(get_current_user)):
+    """Report problematic content"""
+    report_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_report = {
+        "id": report_id,
+        "reporterId": current_user["id"],
+        "reporter": {k: v for k, v in current_user.items() if k != "password"},
+        "contentType": report_data.contentType,
+        "contentId": report_data.contentId,
+        "reason": report_data.reason,
+        "description": report_data.description,
+        "status": "pending",
+        "createdAt": now,
+        "resolvedAt": None
+    }
+    
+    await db.reported_content.insert_one(new_report)
+    
+    return {
+        "success": True,
+        "message": "Content report submitted successfully",
+        "reportId": report_id
+    }
+
 # Original routes
 @api_router.get("/")
 async def root():
-    return {"message": "NovaSocial API - Phases 1-7 Complete"}
+    return {"message": "NovaSocial API - Phase 15 Complete"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
