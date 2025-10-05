@@ -2874,7 +2874,15 @@ async def get_user_support_tickets(current_user = Depends(get_current_user), ski
         "userId": current_user["id"]
     }, {"_id": 0}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
     
-    return tickets
+    # Clean up tickets to remove any ObjectId fields
+    cleaned_tickets = []
+    for ticket in tickets:
+        if "user" in ticket and isinstance(ticket["user"], dict):
+            # Remove any ObjectId fields from user object
+            ticket["user"] = {k: v for k, v in ticket["user"].items() if k != "_id"}
+        cleaned_tickets.append(ticket)
+    
+    return cleaned_tickets
 
 @api_router.get("/support/faq", response_model=List[dict])
 async def get_faq():
