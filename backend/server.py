@@ -133,33 +133,7 @@ class ConversationCreate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
-# Phase 14 - Enhanced Messaging Models (importing from messaging_models.py)
-from models.messaging_models import ConversationSettings, MessageQueue, OnlineStatus
-
-class UserActivity(BaseModel):
-    userId: str
-    status: str  # "online", "offline", "away"
-    lastSeen: datetime
-    deviceInfo: Optional[str] = None
-    socketId: Optional[str] = None
-
-class ChatFilter(BaseModel):
-    userId: str
-    filterType: str  # "all", "unread", "groups", "direct"
-    searchQuery: Optional[str] = None
-    isActive: bool = True
-
-class MessageDeliveryStatus(BaseModel):
-    messageId: str
-    status: str  # "sent", "delivered", "read"
-    userId: str
-    timestamp: datetime
-
-class TypingIndicator(BaseModel):
-    conversationId: str
-    userId: str
-    isTyping: bool
-    timestamp: datetime
+# Import Phase 14 models from messaging_models.py
 
 class MessageCreate(BaseModel):
     conversationId: str
