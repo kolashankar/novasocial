@@ -28,56 +28,29 @@ SAMPLE_IMAGE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA
 
 class BackendTester:
     def __init__(self):
-        self.base_url = BASE_URL
         self.session = requests.Session()
         self.auth_token = None
         self.user_id = None
         self.test_results = []
         
-    def log_result(self, test_name: str, success: bool, message: str, details: Dict = None):
+    def log_result(self, test_name, success, details="", error_msg=""):
         """Log test result"""
         result = {
             "test": test_name,
             "success": success,
-            "message": message,
-            "timestamp": datetime.now().isoformat(),
-            "details": details or {}
+            "details": details,
+            "error": error_msg,
+            "timestamp": datetime.now().isoformat()
         }
         self.test_results.append(result)
+        
         status = "✅ PASS" if success else "❌ FAIL"
-        print(f"{status} - {test_name}: {message}")
-        if details and not success:
-            print(f"   Details: {details}")
-    
-    def make_request(self, method: str, endpoint: str, data: Dict = None, params: Dict = None, auth_required: bool = True) -> tuple:
-        """Make HTTP request with proper headers"""
-        url = f"{self.base_url}{endpoint}"
-        headers = {"Content-Type": "application/json"}
-        
-        if auth_required and self.auth_token:
-            headers["Authorization"] = f"Bearer {self.auth_token}"
-        
-        try:
-            if method.upper() == "GET":
-                response = self.session.get(url, headers=headers, params=params, timeout=30)
-            elif method.upper() == "POST":
-                response = self.session.post(url, headers=headers, json=data, timeout=30)
-            elif method.upper() == "PUT":
-                response = self.session.put(url, headers=headers, json=data, timeout=30)
-            elif method.upper() == "DELETE":
-                response = self.session.delete(url, headers=headers, timeout=30)
-            else:
-                return False, {"error": f"Unsupported method: {method}"}
-            
-            return True, {
-                "status_code": response.status_code,
-                "response": response.json() if response.content else {},
-                "headers": dict(response.headers)
-            }
-        except requests.exceptions.RequestException as e:
-            return False, {"error": str(e)}
-        except json.JSONDecodeError as e:
-            return False, {"error": f"JSON decode error: {str(e)}", "response_text": response.text}
+        print(f"{status} - {test_name}")
+        if details:
+            print(f"    Details: {details}")
+        if error_msg:
+            print(f"    Error: {error_msg}")
+        print()
     
     def setup_test_user(self):
         """Setup test user for authentication"""
