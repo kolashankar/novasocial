@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 
 # Configuration
-BASE_URL = "https://story-tools-ui.preview.emergentagent.com/api"
+BASE_URL = "https://social-stories-hub-1.preview.emergentagent.com/api"
 TEST_USER_EMAIL = "alice.johnson@example.com"
 TEST_USER_PASSWORD = "SecurePass123!"
 TEST_USER_FULLNAME = "Alice Johnson"
