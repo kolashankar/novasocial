@@ -133,12 +133,8 @@ class ConversationCreate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
-# Phase 14 - Enhanced Messaging Models
-class MessageStatus(BaseModel):
-    messageId: str
-    userId: str
-    status: str  # "sent", "delivered", "read"
-    timestamp: datetime
+# Phase 14 - Enhanced Messaging Models (importing from messaging_models.py)
+from models.messaging_models import ConversationSettings, MessageQueue, OnlineStatus
 
 class UserActivity(BaseModel):
     userId: str
