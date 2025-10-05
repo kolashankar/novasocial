@@ -50,7 +50,7 @@ export default function AICaptionGenerator() {
   const [context, setContext] = useState('');
   const [editingCaption, setEditingCaption] = useState(false);
 
-  const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://socialcrypt-app.preview.emergentagent.com';
+  const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://bugzero-social.preview.emergentagent.com';
 
   const generateCaptions = async () => {
     if (!mediaUrl) {

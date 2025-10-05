@@ -62,7 +62,7 @@ export default function EncryptedChat() {
   const [recipientInfo, setRecipientInfo] = useState<{ id: string; name: string; status: 'online' | 'offline' } | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
-  const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://socialcrypt-app.preview.emergentagent.com';
+  const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://bugzero-social.preview.emergentagent.com';
 
   useEffect(() => {
     if (!user || !conversationId) return;
