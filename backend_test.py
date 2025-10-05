@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backend Testing for Phase 18 - Video Filters & AR Effects for Reels
-Testing newly implemented reels endpoints with comprehensive scenarios
+NovaSocial Backend API Comprehensive Testing Suite
+Tests all backend endpoints for the social media application including 23+ phases
 """
 
 import requests
@@ -16,12 +16,19 @@ import time
 # Get backend URL from frontend .env
 BACKEND_URL = "https://bugzero-social.preview.emergentagent.com/api"
 
-# Test data for Phase 18 - Reels Testing
+# Test data for comprehensive testing
 TEST_USER_DATA = {
-    "fullName": "Reels Tester Phase18",
-    "username": "reelstester_phase18",
-    "email": "reelstester_phase18@example.com",
-    "password": "ReelsTest123!"
+    "fullName": "Sarah Johnson",
+    "username": "sarah_test_user",
+    "email": "sarah.johnson@testmail.com",
+    "password": "SecurePass123!"
+}
+
+TEST_USER2_DATA = {
+    "fullName": "Mike Chen",
+    "username": "mike_test_user", 
+    "email": "mike.chen@testmail.com",
+    "password": "SecurePass456!"
 }
 
 # Sample base64 image for testing
