@@ -3562,6 +3562,447 @@ async def check_privacy_permissions(
         isAllowed=True
     )
 
+# PHASE 17: STORY & CREATIVE TOOLS ENDPOINTS
+
+from models.story_creative_models import (
+    StorySticker, MusicLibraryItem, GIFLibraryItem, FrameTemplate,
+    TextStyle, ColorPalette, InteractiveElement, CollaborativePrompt,
+    ECommerceLink, StoryTemplate, StickerCreate, StickerUpdate,
+    TextStyleCreate, InteractiveElementCreate, InteractiveResponse,
+    CollaborativePromptCreate, PromptParticipation, MOCK_MUSIC_LIBRARY,
+    MOCK_GIF_LIBRARY, MOCK_FRAMES, MOCK_COLOR_PALETTES
+)
+
+@api_router.get("/stories/{story_id}/stickers", response_model=List[StorySticker])
+async def get_story_stickers(
+    story_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get all stickers for a story"""
+    stickers = await db.story_stickers.find({"storyId": story_id}).to_list(None)
+    return [StorySticker(**sticker) for sticker in stickers]
+
+@api_router.post("/stories/{story_id}/stickers", response_model=dict)
+async def add_story_sticker(
+    story_id: str,
+    sticker_data: StickerCreate,
+    current_user = Depends(get_current_user)
+):
+    """Add sticker to story"""
+    # Verify user owns the story
+    story = await db.stories.find_one({"id": story_id, "authorId": current_user["id"]})
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found or not owned by user")
+    
+    sticker_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_sticker = {
+        "id": sticker_id,
+        "storyId": story_id,
+        "type": sticker_data.type,
+        "data": sticker_data.data,
+        "position": sticker_data.position,
+        "zIndex": sticker_data.zIndex or 0,
+        "isInteractive": sticker_data.isInteractive or False,
+        "expiresAt": sticker_data.expiresAt,
+        "createdAt": now
+    }
+    
+    await db.story_stickers.insert_one(new_sticker)
+    
+    return {
+        "success": True,
+        "stickerId": sticker_id,
+        "message": "Sticker added successfully"
+    }
+
+@api_router.put("/stories/stickers/{sticker_id}")
+async def update_story_sticker(
+    sticker_id: str,
+    update_data: StickerUpdate,
+    current_user = Depends(get_current_user)
+):
+    """Update sticker position or data"""
+    sticker = await db.story_stickers.find_one({"id": sticker_id})
+    if not sticker:
+        raise HTTPException(status_code=404, detail="Sticker not found")
+    
+    # Verify user owns the story
+    story = await db.stories.find_one({"id": sticker["storyId"], "authorId": current_user["id"]})
+    if not story:
+        raise HTTPException(status_code=403, detail="Not authorized to edit this sticker")
+    
+    update_fields = {}
+    if update_data.position is not None:
+        update_fields["position"] = update_data.position
+    if update_data.data is not None:
+        update_fields["data"] = update_data.data
+    if update_data.zIndex is not None:
+        update_fields["zIndex"] = update_data.zIndex
+    
+    await db.story_stickers.update_one(
+        {"id": sticker_id},
+        {"$set": update_fields}
+    )
+    
+    return {"success": True, "message": "Sticker updated successfully"}
+
+@api_router.delete("/stories/stickers/{sticker_id}")
+async def delete_story_sticker(
+    sticker_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete sticker from story"""
+    sticker = await db.story_stickers.find_one({"id": sticker_id})
+    if not sticker:
+        raise HTTPException(status_code=404, detail="Sticker not found")
+    
+    # Verify user owns the story
+    story = await db.stories.find_one({"id": sticker["storyId"], "authorId": current_user["id"]})
+    if not story:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this sticker")
+    
+    await db.story_stickers.delete_one({"id": sticker_id})
+    
+    return {"success": True, "message": "Sticker deleted successfully"}
+
+@api_router.get("/creative/music", response_model=List[MusicLibraryItem])
+async def get_music_library(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 20
+):
+    """Get music library for story stickers"""
+    music_items = MOCK_MUSIC_LIBRARY.copy()
+    
+    # Filter by category
+    if category:
+        music_items = [item for item in music_items if item.get("category") == category]
+    
+    # Filter by search query
+    if search:
+        search_lower = search.lower()
+        music_items = [
+            item for item in music_items
+            if search_lower in item["title"].lower() or search_lower in item["artist"].lower()
+        ]
+    
+    return [MusicLibraryItem(**item) for item in music_items[:limit]]
+
+@api_router.get("/creative/gifs", response_model=List[GIFLibraryItem])
+async def get_gif_library(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 20
+):
+    """Get GIF library for story stickers"""
+    gif_items = MOCK_GIF_LIBRARY.copy()
+    
+    # Filter by category
+    if category:
+        gif_items = [item for item in gif_items if item.get("category") == category]
+    
+    # Filter by search query
+    if search:
+        search_lower = search.lower()
+        gif_items = [
+            item for item in gif_items
+            if search_lower in item["title"].lower() or 
+               any(search_lower in tag.lower() for tag in item["tags"])
+        ]
+    
+    return [GIFLibraryItem(**item) for item in gif_items[:limit]]
+
+@api_router.get("/creative/frames", response_model=List[FrameTemplate])
+async def get_frame_templates(category: Optional[str] = None):
+    """Get frame templates for story borders"""
+    frames = MOCK_FRAMES.copy()
+    
+    if category:
+        frames = [frame for frame in frames if frame.get("category") == category]
+    
+    return [FrameTemplate(**frame) for frame in frames]
+
+@api_router.get("/creative/colors", response_model=List[ColorPalette])
+async def get_color_palettes(category: Optional[str] = None):
+    """Get color palettes for text styling"""
+    palettes = MOCK_COLOR_PALETTES.copy()
+    
+    if category:
+        palettes = [palette for palette in palettes if palette.get("category") == category]
+    
+    return [ColorPalette(**palette) for palette in palettes]
+
+@api_router.post("/stories/{story_id}/interactive", response_model=dict)
+async def add_interactive_element(
+    story_id: str,
+    element_data: InteractiveElementCreate,
+    current_user = Depends(get_current_user)
+):
+    """Add interactive element (poll, quiz, question) to story"""
+    # Verify user owns the story
+    story = await db.stories.find_one({"id": story_id, "authorId": current_user["id"]})
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found or not owned by user")
+    
+    element_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_element = {
+        "id": element_id,
+        "storyId": story_id,
+        "type": element_data.type,
+        "question": element_data.question,
+        "options": element_data.options,
+        "correctAnswer": element_data.correctAnswer,
+        "responses": [],
+        "expiresAt": element_data.expiresAt,
+        "isActive": True,
+        "createdAt": now
+    }
+    
+    await db.interactive_elements.insert_one(new_element)
+    
+    return {
+        "success": True,
+        "elementId": element_id,
+        "message": "Interactive element added successfully"
+    }
+
+@api_router.post("/interactive/{element_id}/respond")
+async def respond_to_interactive_element(
+    element_id: str,
+    response_data: InteractiveResponse,
+    current_user = Depends(get_current_user)
+):
+    """Respond to interactive element"""
+    element = await db.interactive_elements.find_one({"id": element_id})
+    if not element:
+        raise HTTPException(status_code=404, detail="Interactive element not found")
+    
+    if not element.get("isActive"):
+        raise HTTPException(status_code=400, detail="Interactive element is no longer active")
+    
+    # Check if user already responded
+    existing_response = next(
+        (r for r in element.get("responses", []) if r.get("userId") == current_user["id"]),
+        None
+    )
+    
+    if existing_response:
+        raise HTTPException(status_code=400, detail="You have already responded to this element")
+    
+    # Add response
+    new_response = {
+        "userId": current_user["id"],
+        "response": response_data.response,
+        "timestamp": datetime.utcnow()
+    }
+    
+    await db.interactive_elements.update_one(
+        {"id": element_id},
+        {"$push": {"responses": new_response}}
+    )
+    
+    return {
+        "success": True,
+        "message": "Response recorded successfully"
+    }
+
+@api_router.get("/interactive/{element_id}/results")
+async def get_interactive_results(
+    element_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get results for interactive element"""
+    element = await db.interactive_elements.find_one({"id": element_id})
+    if not element:
+        raise HTTPException(status_code=404, detail="Interactive element not found")
+    
+    # Check if user is the story owner or has responded
+    story = await db.stories.find_one({"id": element["storyId"]})
+    has_responded = any(r.get("userId") == current_user["id"] for r in element.get("responses", []))
+    
+    if story["authorId"] != current_user["id"] and not has_responded:
+        raise HTTPException(status_code=403, detail="Not authorized to view results")
+    
+    responses = element.get("responses", [])
+    
+    # Calculate results based on type
+    if element["type"] == "poll":
+        results = {}
+        for option in element.get("options", []):
+            results[option] = 0
+        
+        for response in responses:
+            selected_option = response["response"].get("selectedOption")
+            if selected_option in results:
+                results[selected_option] += 1
+    
+    elif element["type"] == "quiz":
+        correct_count = 0
+        total_count = len(responses)
+        
+        for response in responses:
+            if response["response"].get("selectedAnswer") == element.get("correctAnswer"):
+                correct_count += 1
+        
+        results = {
+            "totalResponses": total_count,
+            "correctResponses": correct_count,
+            "correctPercentage": (correct_count / total_count * 100) if total_count > 0 else 0
+        }
+    
+    else:  # question type
+        results = {
+            "totalResponses": len(responses),
+            "responses": [r["response"] for r in responses[-10:]]  # Last 10 responses
+        }
+    
+    return {
+        "element": InteractiveElement(**element),
+        "results": results
+    }
+
+@api_router.post("/collaborative/prompts", response_model=dict)
+async def create_collaborative_prompt(
+    prompt_data: CollaborativePromptCreate,
+    current_user = Depends(get_current_user)
+):
+    """Create collaborative prompt for 'Add Yours' sticker"""
+    prompt_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_prompt = {
+        "id": prompt_id,
+        "creatorId": current_user["id"],
+        "promptText": prompt_data.promptText,
+        "template": prompt_data.template,
+        "participants": [],
+        "responses": [],
+        "maxParticipants": prompt_data.maxParticipants,
+        "expiresAt": prompt_data.expiresAt,
+        "category": prompt_data.category or "general",
+        "tags": prompt_data.tags or [],
+        "isActive": True,
+        "createdAt": now
+    }
+    
+    await db.collaborative_prompts.insert_one(new_prompt)
+    
+    return {
+        "success": True,
+        "promptId": prompt_id,
+        "message": "Collaborative prompt created successfully"
+    }
+
+@api_router.post("/collaborative/prompts/{prompt_id}/participate")
+async def participate_in_prompt(
+    prompt_id: str,
+    participation_data: PromptParticipation,
+    current_user = Depends(get_current_user)
+):
+    """Participate in collaborative prompt"""
+    prompt = await db.collaborative_prompts.find_one({"id": prompt_id})
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    if not prompt.get("isActive"):
+        raise HTTPException(status_code=400, detail="Prompt is no longer active")
+    
+    # Check if already participated
+    if current_user["id"] in prompt.get("participants", []):
+        raise HTTPException(status_code=400, detail="You have already participated in this prompt")
+    
+    # Check max participants
+    if prompt.get("maxParticipants") and len(prompt.get("participants", [])) >= prompt["maxParticipants"]:
+        raise HTTPException(status_code=400, detail="Maximum participants reached")
+    
+    # Add participation
+    new_response = {
+        "userId": current_user["id"],
+        "response": participation_data.response,
+        "timestamp": datetime.utcnow()
+    }
+    
+    await db.collaborative_prompts.update_one(
+        {"id": prompt_id},
+        {
+            "$push": {
+                "participants": current_user["id"],
+                "responses": new_response
+            }
+        }
+    )
+    
+    return {
+        "success": True,
+        "message": "Successfully participated in prompt"
+    }
+
+@api_router.get("/collaborative/prompts/trending", response_model=List[CollaborativePrompt])
+async def get_trending_prompts(
+    category: Optional[str] = None,
+    limit: int = 10
+):
+    """Get trending collaborative prompts"""
+    match_conditions = {"isActive": True}
+    if category:
+        match_conditions["category"] = category
+    
+    prompts = await db.collaborative_prompts.find(match_conditions)\
+        .sort([("participants", -1), ("createdAt", -1)])\
+        .limit(limit).to_list(limit)
+    
+    # Get creator information
+    creator_ids = [prompt["creatorId"] for prompt in prompts]
+    creators = await db.users.find({"id": {"$in": creator_ids}}).to_list(len(creator_ids)) if creator_ids else []
+    creators_map = {creator["id"]: creator for creator in creators}
+    
+    result = []
+    for prompt in prompts:
+        creator_data = creators_map.get(prompt["creatorId"])
+        creator = UserResponse(**{k: v for k, v in creator_data.items() if k != "password"}) if creator_data else None
+        result.append(CollaborativePrompt(**prompt, creator=creator))
+    
+    return result
+
+@api_router.get("/stories/{story_id}/analytics")
+async def get_story_analytics(
+    story_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get analytics for story (views, interactions, etc.)"""
+    story = await db.stories.find_one({"id": story_id, "authorId": current_user["id"]})
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found or not owned by user")
+    
+    # Get sticker interactions
+    stickers = await db.story_stickers.find({"storyId": story_id}).to_list(None)
+    interactive_elements = await db.interactive_elements.find({"storyId": story_id}).to_list(None)
+    
+    total_interactions = 0
+    for element in interactive_elements:
+        total_interactions += len(element.get("responses", []))
+    
+    analytics = {
+        "views": story.get("viewersCount", 0),
+        "uniqueViewers": len(story.get("viewers", [])),
+        "stickersCount": len(stickers),
+        "interactiveElements": len(interactive_elements),
+        "totalInteractions": total_interactions,
+        "completionRate": 0.8,  # Mock completion rate
+        "averageViewTime": 5.2,  # Mock average view time in seconds
+        "topLocations": ["New York", "San Francisco", "Los Angeles"],  # Mock locations
+        "demographics": {
+            "ageGroups": {"18-24": 45, "25-34": 35, "35-44": 20},
+            "genders": {"female": 60, "male": 40}
+        }
+    }
+    
+    return analytics
+
 # Export the Socket.IO ASGI app for uvicorn
 # This enables Socket.IO functionality
 if __name__ == "__main__":
