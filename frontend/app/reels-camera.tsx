@@ -129,9 +129,20 @@ const PRESET_AR_EFFECTS: AREffect[] = [
 export default function ReelsCamera() {
   const router = useRouter();
   const { user } = useAuth();
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const devices = useCameraDevices();
-  const camera = useRef<Camera>(null);
+  
+  // Handle web platform gracefully
+  const [hasPermission, setHasPermission] = useState(Platform.OS === 'web' ? false : false);
+  const [devices, setDevices] = useState<any>(Platform.OS === 'web' ? null : null);
+  const camera = useRef<any>(null);
+
+  // Initialize camera hooks only on mobile platforms
+  let cameraHooks: any = { hasPermission: false, requestPermission: () => {} };
+  let cameraDevices: any = null;
+
+  if (Platform.OS !== 'web' && useCameraPermission && useCameraDevices) {
+    cameraHooks = useCameraPermission();
+    cameraDevices = useCameraDevices();
+  }
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
