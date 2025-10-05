@@ -1661,6 +1661,493 @@ async def mark_all_notifications_read(current_user = Depends(get_current_user)):
     return {"allRead": True}
 
 
+# PHASE 13: Engagement & Interactions
+
+class CommentCreate(BaseModel):
+    content: str
+    parentId: Optional[str] = None  # For threaded replies
+
+class CommentUpdate(BaseModel):
+    content: str
+
+class CommentReport(BaseModel):
+    reason: str
+    details: Optional[str] = None
+
+class CommentResponse(BaseModel):
+    id: str
+    postId: str
+    authorId: str
+    author: UserResponse
+    content: str
+    parentId: Optional[str]
+    replies: List['CommentResponse'] = []
+    likesCount: int = 0
+    isLiked: bool = False
+    createdAt: datetime
+    updatedAt: Optional[datetime] = None
+
+@api_router.get("/user/liked-posts", response_model=List[PostResponse])
+async def get_liked_posts(
+    current_user = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 20
+):
+    """Get all posts liked by current user with infinite scroll"""
+    liked_posts = await db.posts.find({
+        "likes": current_user["id"]
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get authors
+    author_ids = list(set(post["authorId"] for post in liked_posts))
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids)) if author_ids else []
+    authors_map = {author["id"]: author for author in authors}
+    
+    result = []
+    for post in liked_posts:
+        author_data = authors_map.get(post["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            result.append(PostResponse(**post, author=author, comments=[]))
+    
+    return result
+
+@api_router.delete("/posts/{post_id}/unlike")
+async def unlike_post(post_id: str, current_user = Depends(get_current_user)):
+    """Remove like from a post"""
+    post = await db.posts.find_one({"id": post_id})
+    
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Remove like
+    await db.posts.update_one(
+        {"id": post_id},
+        {
+            "$pull": {"likes": current_user["id"]},
+            "$inc": {"likesCount": -1}
+        }
+    )
+    
+    # Remove notification
+    await db.notifications.delete_one({
+        "senderId": current_user["id"],
+        "relatedId": post_id,
+        "type": "like"
+    })
+    
+    return {"success": True, "message": "Post unliked"}
+
+@api_router.get("/posts/{post_id}/comments", response_model=List[CommentResponse])
+async def get_post_comments(
+    post_id: str,
+    current_user = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get comments for a post with threaded replies"""
+    # Get top-level comments
+    comments = await db.comments.find({
+        "postId": post_id,
+        "parentId": {"$exists": False}
+    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    if not comments:
+        return []
+    
+    comment_ids = [comment["id"] for comment in comments]
+    
+    # Get replies for these comments
+    replies = await db.comments.find({
+        "parentId": {"$in": comment_ids}
+    }).sort("createdAt", 1).to_list(None)
+    
+    # Group replies by parent
+    replies_map = {}
+    for reply in replies:
+        parent_id = reply["parentId"]
+        if parent_id not in replies_map:
+            replies_map[parent_id] = []
+        replies_map[parent_id].append(reply)
+    
+    # Get all authors
+    all_comment_ids = comment_ids + [reply["id"] for reply in replies]
+    author_ids = list(set(comment["authorId"] for comment in comments + replies))
+    authors = await db.users.find({"id": {"$in": author_ids}}).to_list(len(author_ids)) if author_ids else []
+    authors_map = {author["id"]: author for author in authors}
+    
+    # Get comment likes
+    comment_likes = await db.comment_likes.find({
+        "commentId": {"$in": all_comment_ids}
+    }).to_list(None)
+    likes_map = {}
+    for like in comment_likes:
+        comment_id = like["commentId"]
+        if comment_id not in likes_map:
+            likes_map[comment_id] = []
+        likes_map[comment_id].append(like["userId"])
+    
+    # Build response
+    result = []
+    for comment in comments:
+        author_data = authors_map.get(comment["authorId"])
+        if author_data:
+            author = UserResponse(**{k: v for k, v in author_data.items() if k != "password"})
+            
+            # Build replies
+            comment_replies = []
+            for reply in replies_map.get(comment["id"], []):
+                reply_author_data = authors_map.get(reply["authorId"])
+                if reply_author_data:
+                    reply_author = UserResponse(**{k: v for k, v in reply_author_data.items() if k != "password"})
+                    reply_likes = likes_map.get(reply["id"], [])
+                    comment_replies.append(CommentResponse(
+                        **reply,
+                        author=reply_author,
+                        likesCount=len(reply_likes),
+                        isLiked=current_user["id"] in reply_likes,
+                        replies=[]
+                    ))
+            
+            comment_likes_list = likes_map.get(comment["id"], [])
+            result.append(CommentResponse(
+                **comment,
+                author=author,
+                replies=comment_replies,
+                likesCount=len(comment_likes_list),
+                isLiked=current_user["id"] in comment_likes_list
+            ))
+    
+    return result
+
+@api_router.post("/posts/{post_id}/comments")
+async def create_comment(
+    post_id: str,
+    comment_data: CommentCreate,
+    current_user = Depends(get_current_user)
+):
+    """Create a new comment or reply"""
+    # Verify post exists
+    post = await db.posts.find_one({"id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # If it's a reply, verify parent comment exists
+    if comment_data.parentId:
+        parent_comment = await db.comments.find_one({"id": comment_data.parentId})
+        if not parent_comment:
+            raise HTTPException(status_code=404, detail="Parent comment not found")
+    
+    # Create comment
+    comment_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_comment = {
+        "id": comment_id,
+        "postId": post_id,
+        "authorId": current_user["id"],
+        "content": comment_data.content,
+        "parentId": comment_data.parentId,
+        "createdAt": now
+    }
+    
+    await db.comments.insert_one(new_comment)
+    
+    # Create notification for post author (if not commenting on own post)
+    if post["authorId"] != current_user["id"]:
+        notification = {
+            "id": str(uuid.uuid4()),
+            "recipientId": post["authorId"],
+            "senderId": current_user["id"],
+            "type": "comment",
+            "title": "New Comment",
+            "message": f"{current_user['username']} commented on your post",
+            "relatedId": post_id,
+            "relatedType": "post",
+            "isRead": False,
+            "createdAt": now
+        }
+        
+        await db.notifications.insert_one(notification)
+        
+        # Real-time notification via Socket.IO
+        await sio.emit('new_notification', notification, room=f"user_{post['authorId']}")
+    
+    return {"success": True, "commentId": comment_id, "message": "Comment created"}
+
+@api_router.put("/comments/{comment_id}")
+async def edit_comment(
+    comment_id: str,
+    comment_data: CommentUpdate,
+    current_user = Depends(get_current_user)
+):
+    """Edit a comment"""
+    comment = await db.comments.find_one({
+        "id": comment_id,
+        "authorId": current_user["id"]
+    })
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found or access denied")
+    
+    await db.comments.update_one(
+        {"id": comment_id},
+        {
+            "$set": {
+                "content": comment_data.content,
+                "updatedAt": datetime.utcnow()
+            }
+        }
+    )
+    
+    return {"success": True, "message": "Comment updated"}
+
+@api_router.delete("/comments/{comment_id}")
+async def delete_comment(comment_id: str, current_user = Depends(get_current_user)):
+    """Delete a comment"""
+    comment = await db.comments.find_one({
+        "id": comment_id,
+        "authorId": current_user["id"]
+    })
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found or access denied")
+    
+    # Delete comment and its replies
+    await db.comments.delete_many({
+        "$or": [
+            {"id": comment_id},
+            {"parentId": comment_id}
+        ]
+    })
+    
+    # Delete comment likes
+    await db.comment_likes.delete_many({
+        "commentId": {"$in": [comment_id]}
+    })
+    
+    return {"success": True, "message": "Comment deleted"}
+
+@api_router.post("/comments/{comment_id}/like")
+async def like_comment(comment_id: str, current_user = Depends(get_current_user)):
+    """Like a comment"""
+    comment = await db.comments.find_one({"id": comment_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Check if already liked
+    existing_like = await db.comment_likes.find_one({
+        "commentId": comment_id,
+        "userId": current_user["id"]
+    })
+    
+    if existing_like:
+        raise HTTPException(status_code=400, detail="Comment already liked")
+    
+    # Add like
+    like_id = str(uuid.uuid4())
+    new_like = {
+        "id": like_id,
+        "commentId": comment_id,
+        "userId": current_user["id"],
+        "createdAt": datetime.utcnow()
+    }
+    
+    await db.comment_likes.insert_one(new_like)
+    
+    return {"success": True, "message": "Comment liked"}
+
+@api_router.delete("/comments/{comment_id}/like")
+async def unlike_comment(comment_id: str, current_user = Depends(get_current_user)):
+    """Remove like from comment"""
+    result = await db.comment_likes.delete_one({
+        "commentId": comment_id,
+        "userId": current_user["id"]
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Like not found")
+    
+    return {"success": True, "message": "Comment unliked"}
+
+@api_router.post("/comments/{comment_id}/report")
+async def report_comment(
+    comment_id: str,
+    report_data: CommentReport,
+    current_user = Depends(get_current_user)
+):
+    """Report a comment"""
+    comment = await db.comments.find_one({"id": comment_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Create report
+    report_id = str(uuid.uuid4())
+    report = {
+        "id": report_id,
+        "commentId": comment_id,
+        "reportedBy": current_user["id"],
+        "reason": report_data.reason,
+        "details": report_data.details,
+        "status": "pending",
+        "createdAt": datetime.utcnow()
+    }
+    
+    await db.comment_reports.insert_one(report)
+    
+    return {"success": True, "message": "Comment reported successfully"}
+
+@api_router.get("/user/followers-list", response_model=List[UserResponse])
+async def get_followers_list(
+    current_user = Depends(get_current_user),
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get followers list with search and pagination"""
+    # Get follower IDs
+    follows = await db.follows.find({"followingId": current_user["id"]}).skip(skip).limit(limit).to_list(limit)
+    follower_ids = [follow["followerId"] for follow in follows]
+    
+    if not follower_ids:
+        return []
+    
+    # Build search query
+    query = {"id": {"$in": follower_ids}}
+    if search:
+        query["$or"] = [
+            {"username": {"$regex": search, "$options": "i"}},
+            {"fullName": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get followers
+    followers = await db.users.find(query).to_list(len(follower_ids))
+    return [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in followers]
+
+@api_router.get("/user/following-list", response_model=List[UserResponse])
+async def get_following_list(
+    current_user = Depends(get_current_user),
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get following list with search and pagination"""
+    # Get following IDs
+    follows = await db.follows.find({"followerId": current_user["id"]}).skip(skip).limit(limit).to_list(limit)
+    following_ids = [follow["followingId"] for follow in follows]
+    
+    if not following_ids:
+        return []
+    
+    # Build search query
+    query = {"id": {"$in": following_ids}}
+    if search:
+        query["$or"] = [
+            {"username": {"$regex": search, "$options": "i"}},
+            {"fullName": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get following users
+    following = await db.users.find(query).to_list(len(following_ids))
+    return [UserResponse(**{k: v for k, v in user.items() if k != "password"}) for user in following]
+
+@api_router.post("/users/{user_id}/block")
+async def block_user(user_id: str, current_user = Depends(get_current_user)):
+    """Block a user"""
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    
+    # Check if user exists
+    target_user = await db.users.find_one({"id": user_id})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already blocked
+    existing_block = await db.user_blocks.find_one({
+        "blockerId": current_user["id"],
+        "blockedId": user_id
+    })
+    
+    if existing_block:
+        raise HTTPException(status_code=400, detail="User already blocked")
+    
+    # Create block
+    block_id = str(uuid.uuid4())
+    block = {
+        "id": block_id,
+        "blockerId": current_user["id"],
+        "blockedId": user_id,
+        "createdAt": datetime.utcnow()
+    }
+    
+    await db.user_blocks.insert_one(block)
+    
+    # Remove follow relationship if exists
+    await db.follows.delete_many({
+        "$or": [
+            {"followerId": current_user["id"], "followingId": user_id},
+            {"followerId": user_id, "followingId": current_user["id"]}
+        ]
+    })
+    
+    return {"success": True, "message": "User blocked successfully"}
+
+@api_router.delete("/users/{user_id}/block")
+async def unblock_user(user_id: str, current_user = Depends(get_current_user)):
+    """Unblock a user"""
+    result = await db.user_blocks.delete_one({
+        "blockerId": current_user["id"],
+        "blockedId": user_id
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Block not found")
+    
+    return {"success": True, "message": "User unblocked successfully"}
+
+@api_router.get("/user/engagement-analytics")
+async def get_engagement_analytics(current_user = Depends(get_current_user)):
+    """Get engagement analytics for creator accounts"""
+    # Check if user is a creator
+    creator_profile = await db.creator_profiles.find_one({"userId": current_user["id"]})
+    if not creator_profile:
+        raise HTTPException(status_code=403, detail="Creator account required")
+    
+    # Get analytics data
+    user_posts = await db.posts.find({"authorId": current_user["id"]}).to_list(None)
+    
+    total_posts = len(user_posts)
+    total_likes = sum(post.get("likesCount", 0) for post in user_posts)
+    total_comments = await db.comments.count_documents({"postId": {"$in": [post["id"] for post in user_posts]}})
+    
+    # Get follower count
+    followers_count = await db.follows.count_documents({"followingId": current_user["id"]})
+    
+    # Calculate engagement rate
+    engagement_rate = 0
+    if total_posts > 0 and followers_count > 0:
+        engagement_rate = ((total_likes + total_comments) / total_posts / followers_count) * 100
+    
+    # Get recent performance (last 30 days)
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    recent_posts = [post for post in user_posts if post["createdAt"] >= thirty_days_ago]
+    recent_likes = sum(post.get("likesCount", 0) for post in recent_posts)
+    
+    return {
+        "totalPosts": total_posts,
+        "totalLikes": total_likes,
+        "totalComments": total_comments,
+        "followersCount": followers_count,
+        "engagementRate": round(engagement_rate, 2),
+        "recentPosts": len(recent_posts),
+        "recentLikes": recent_likes,
+        "analytics": {
+            "averageLikesPerPost": round(total_likes / total_posts, 2) if total_posts > 0 else 0,
+            "averageCommentsPerPost": round(total_comments / total_posts, 2) if total_posts > 0 else 0
+        }
+    }
+
+
 # Search and Discovery Routes
 @api_router.get("/search", response_model=SearchResponse)
 async def search(q: str, type: str = "all", current_user = Depends(get_current_user), limit: int = 20):
