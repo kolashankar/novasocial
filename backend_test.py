@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """
-NovaSocial Backend API Testing Suite
-Comprehensive testing for Follow System, Notifications, Search & Discovery, and Recommendations
+Backend Testing Script for Phase 15 - UI/UX & Accessibility Improvements
+Tests all Phase 15 endpoints for NovaSocial app
 """
 
 import requests
 import json
+import sys
 import time
-import uuid
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Any, Optional
 
 # Configuration
 BASE_URL = "https://story-tools-ui.preview.emergentagent.com/api"
-TIMEOUT = 30
+TEST_USER_EMAIL = "alice.johnson@example.com"
+TEST_USER_PASSWORD = "SecurePass123!"
+TEST_USER_FULLNAME = "Alice Johnson"
+TEST_USER_USERNAME = "alice_johnson"
 
-class NovaSocialTester:
+class BackendTester:
     def __init__(self):
         self.base_url = BASE_URL
         self.session = requests.Session()
