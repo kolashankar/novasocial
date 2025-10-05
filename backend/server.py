@@ -4588,11 +4588,8 @@ async def generate_caption_and_hashtags(
         """
         
         # Generate captions using AI
-        response = ai_client.generate_text(
-            prompt=media_analysis_prompt,
-            max_tokens=500,
-            temperature=0.7
-        )
+        user_message = UserMessage(text=media_analysis_prompt)
+        response = await ai_client.send_message(user_message)
         
         # Parse AI response (simplified - in production you'd have better parsing)
         import json
