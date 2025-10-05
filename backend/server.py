@@ -38,11 +38,8 @@ security = HTTPBearer()
 # Create Socket.IO server
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins="*")
 
-# Create the main app without a prefix
-app = FastAPI()
-
-# Mount Socket.IO
-socket_app = socketio.ASGIApp(sio, app)
+# Mount Socket.IO - app will be created later with lifespan
+socket_app = None
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
