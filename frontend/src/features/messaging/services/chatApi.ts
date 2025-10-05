@@ -97,6 +97,79 @@ class ChatApiService {
       isGroup: false,
     });
   }
+
+  // PHASE 14: Enhanced Messaging & Real-time Features
+  async getFilteredConversations(params: {
+    filterType: 'all' | 'unread' | 'groups' | 'direct';
+    searchQuery?: string;
+    skip?: number;
+    limit?: number;
+  }): Promise<Conversation[]> {
+    const queryParams = new URLSearchParams({
+      filter_type: params.filterType,
+      skip: String(params.skip || 0),
+      limit: String(params.limit || 50),
+    });
+    
+    if (params.searchQuery) {
+      queryParams.append('search_query', params.searchQuery);
+    }
+
+    const response = await api.get(`/conversations/filters?${queryParams.toString()}`);
+    return response.data;
+  }
+
+  async updateConversationSettings(conversationId: string, settings: {
+    isArchived?: boolean;
+    isMuted?: boolean;
+    muteUntil?: string;
+  }): Promise<void> {
+    await api.put(`/conversations/${conversationId}/settings`, settings);
+  }
+
+  async sendTypingIndicator(conversationId: string, isTyping: boolean): Promise<void> {
+    await api.post(`/conversations/${conversationId}/typing`, {
+      conversationId,
+      userId: '', // Will be set by backend from auth
+      isTyping,
+    });
+  }
+
+  async markMessageRead(messageId: string): Promise<void> {
+    await api.put(`/messages/${messageId}/read`);
+  }
+
+  async markAllMessagesRead(conversationId: string): Promise<void> {
+    await api.put(`/conversations/${conversationId}/read-all`);
+  }
+
+  async getUserActivity(userId: string): Promise<{
+    userId: string;
+    status: string;
+    lastSeen: string;
+    isOnline: boolean;
+  }> {
+    const response = await api.get(`/users/${userId}/activity`);
+    return response.data;
+  }
+
+  async updateUserActivity(status: 'online' | 'offline' | 'away' | 'busy'): Promise<void> {
+    await api.put('/user/activity', { status });
+  }
+
+  async queueOfflineMessage(messageData: SendMessageData & { conversationId: string }): Promise<{ queueId: string }> {
+    const response = await api.post('/messages/queue', messageData);
+    return response.data;
+  }
+
+  async syncOfflineMessages(): Promise<{
+    sentCount: number;
+    failedCount: number;
+    totalProcessed: number;
+  }> {
+    const response = await api.post('/messages/sync');
+    return response.data;
+  }
 }
 
 export const chatApi = new ChatApiService();
