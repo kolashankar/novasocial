@@ -195,7 +195,7 @@ export default function ReelsCamera() {
     };
   }, [isRecording, animatedValue]);
 
-  const device = cameraType === 'back' ? devices.back : devices.front;
+  const device = Platform.OS === 'web' ? null : (devices && (cameraType === 'back' ? devices.back : devices.front));
 
   if (!hasPermission) {
     return (
