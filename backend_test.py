@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backend Testing for Phase 16 & 17 - Social Media App
-Testing newly implemented Posting & Media Enhancements and Story & Creative Tools endpoints
+Backend Testing for Phase 18 - Video Filters & AR Effects for Reels
+Testing newly implemented reels endpoints with comprehensive scenarios
 """
 
 import requests
@@ -11,16 +11,17 @@ import uuid
 from datetime import datetime, timedelta
 import os
 import sys
+import time
 
 # Get backend URL from frontend .env
 BACKEND_URL = "https://socialwave-mobile.preview.emergentagent.com/api"
 
-# Test data
+# Test data for Phase 18 - Reels Testing
 TEST_USER_DATA = {
-    "fullName": "Test User Phase16",
-    "username": "testuser_phase16",
-    "email": "testuser_phase16@example.com",
-    "password": "testpassword123"
+    "fullName": "Reels Tester Phase18",
+    "username": "reelstester_phase18",
+    "email": "reelstester_phase18@example.com",
+    "password": "ReelsTest123!"
 }
 
 # Sample base64 image for testing
