@@ -157,10 +157,14 @@ export default function ReelsCamera() {
   const animatedValue = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (!hasPermission) {
-      requestPermission();
+    if (Platform.OS !== 'web') {
+      if (!cameraHooks.hasPermission) {
+        cameraHooks.requestPermission();
+      }
+      setHasPermission(cameraHooks.hasPermission);
+      setDevices(cameraDevices);
     }
-  }, [hasPermission, requestPermission]);
+  }, [Platform.OS]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
