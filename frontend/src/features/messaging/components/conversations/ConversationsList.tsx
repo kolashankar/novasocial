@@ -479,4 +479,85 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  
+  // Phase 14: New styles for enhanced messaging UI
+  filterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
+  },
+  filterScroll: {
+    flex: 1,
+  },
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 8,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+  },
+  activeFilterTab: {
+    backgroundColor: '#667eea',
+  },
+  filterText: {
+    marginLeft: 6,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  activeFilterText: {
+    color: '#ffffff',
+  },
+  searchToggle: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 25,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#1e293b',
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  onlineIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#10b981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  readReceiptContainer: {
+    marginLeft: 4,
+  },
+  lastSeenText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
 });
