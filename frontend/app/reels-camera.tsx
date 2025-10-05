@@ -197,11 +197,30 @@ export default function ReelsCamera() {
 
   const device = Platform.OS === 'web' ? null : (devices && (cameraType === 'back' ? devices.back : devices.front));
 
+  // Handle web platform - show message instead of camera
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.webMessage}>
+          <Ionicons name="camera-outline" size={64} color={COLORS.primary} />
+          <Text style={styles.webMessageTitle}>Camera Not Available</Text>
+          <Text style={styles.webMessageText}>
+            Camera functionality is only available on mobile devices. 
+            Please use the Expo Go app on your phone to test this feature.
+          </Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   if (!hasPermission) {
     return (
       <View style={styles.container}>
         <Text style={styles.permissionText}>Camera permission required</Text>
-        <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+        <TouchableOpacity style={styles.permissionButton} onPress={() => cameraHooks.requestPermission()}>
           <Text style={styles.permissionButtonText}>Grant Permission</Text>
         </TouchableOpacity>
       </View>
