@@ -27,12 +27,13 @@ TEST_USER_DATA = {
 # Sample base64 image for testing
 SAMPLE_IMAGE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 
-class BackendTester:
+class ReelsBackendTester:
     def __init__(self):
         self.session = requests.Session()
         self.auth_token = None
         self.user_id = None
         self.test_results = []
+        self.test_reel_id = None
         
     def log_result(self, test_name, success, details="", error_msg=""):
         """Log test result"""
