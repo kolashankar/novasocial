@@ -362,14 +362,16 @@ export default function ReelsCamera() {
 
   return (
     <View style={styles.container}>
-      <Camera
-        ref={camera}
-        style={styles.camera}
-        device={device}
-        isActive={true}
-        video={true}
-        audio={true}
-      />
+      {Camera && (
+        <Camera
+          ref={camera}
+          style={styles.camera}
+          device={device}
+          isActive={true}
+          video={true}
+          audio={true}
+        />
+      )}
       
       {/* Header Controls */}
       <View style={styles.header}>
