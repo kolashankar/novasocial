@@ -99,27 +99,45 @@ class ReelsBackendTester:
             self.log_result("Authentication Setup", False, "", str(e))
             return False
     
-    def test_phase16_endpoints(self):
-        """Test Phase 16 - Posting & Media Enhancements endpoints"""
-        print("🚀 Testing Phase 16 - Posting & Media Enhancements Endpoints...")
+    def generate_mock_video_data(self):
+        """Generate mock base64 video data"""
+        # Create a simple mock video data (base64 encoded)
+        mock_video_bytes = b"MOCK_VIDEO_DATA_FOR_TESTING_REELS_UPLOAD" * 100
+        return base64.b64encode(mock_video_bytes).decode('utf-8')
         
-        # 1. Test Tag Search API
-        self.test_tag_search()
+    def test_phase18_endpoints(self):
+        """Test Phase 18 - Video Filters & AR Effects for Reels endpoints"""
+        print("🎬 Testing Phase 18 - Video Filters & AR Effects for Reels Endpoints...")
         
-        # 2. Test Enhanced Post Creation
-        post_id = self.test_enhanced_post_creation()
+        # 1. Test Filter Presets (Public endpoint)
+        self.test_get_filter_presets()
         
-        # 3. Test Location-based Posts
-        self.test_location_posts()
+        # 2. Test Reel Upload with Filters and AR Effects
+        self.test_upload_reel_with_filters()
         
-        # 4. Test Enhanced Story/Reel Creation
-        story_id = self.test_enhanced_story_creation()
+        # Wait for processing to start
+        time.sleep(3)
         
-        # 5. Test Upload Progress Tracking
-        self.test_upload_progress()
+        # 3. Test Processing Status
+        self.test_get_processing_status()
         
-        # 6. Test Tag Validation & Privacy
-        self.test_tag_validation_privacy()
+        # 4. Test Reels Feed
+        self.test_get_reels_feed()
+        
+        # 5. Test Like/Unlike Functionality
+        self.test_toggle_reel_like()
+        
+        # 6. Test View Tracking
+        self.test_add_reel_view()
+        
+        # 7. Test Error Handling
+        self.test_error_handling()
+        
+        # 8. Test Unauthorized Access
+        self.test_unauthorized_access()
+        
+        # 9. Test Reel Deletion (last)
+        self.test_delete_reel()
     
     def test_tag_search(self):
         """Test tag search endpoints"""
