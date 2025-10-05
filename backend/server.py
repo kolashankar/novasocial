@@ -3160,6 +3160,9 @@ async def lifespan(app: FastAPI):
 # Create the main app with lifespan
 app = FastAPI(lifespan=lifespan)
 
+# Mount Socket.IO
+socket_app = socketio.ASGIApp(sio, app)
+
 # Include the router in the main app
 app.include_router(api_router)
 
