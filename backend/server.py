@@ -762,6 +762,9 @@ async def get_security_logs(
 # PHASE 12: Profile & Account Management
 from models.settings_models import *
 
+# PHASE 15: UI/UX & Accessibility Improvements
+from models.settings_models import SupportTicket, FAQ, AppInfo, UserThemeSettings
+
 class ProfileEditRequest(BaseModel):
     username: Optional[str] = None
     fullName: Optional[str] = None
