@@ -2845,7 +2845,7 @@ async def create_support_ticket(ticket_data: SupportTicketCreate, current_user =
     new_ticket = {
         "id": ticket_id,
         "userId": current_user["id"],
-        "user": {k: v for k, v in current_user.items() if k != "password"},
+        "user": {k: v for k, v in current_user.items() if k not in ["password", "_id"]},
         "category": ticket_data.category,
         "subject": ticket_data.subject,
         "description": ticket_data.description,
