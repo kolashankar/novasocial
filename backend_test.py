@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 # Configuration
-BASE_URL = "https://socialmsg-realtime.preview.emergentagent.com/api"
+BASE_URL = "https://tagmedia-app.preview.emergentagent.com/api"
 TIMEOUT = 30
 
 class NovaSocialTester:
