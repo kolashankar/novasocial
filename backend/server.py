@@ -2830,6 +2830,12 @@ class ThemeSettingsUpdate(BaseModel):
     reduceMotion: Optional[bool] = None
     colorBlindMode: Optional[str] = None
 
+class ContentReportCreate(BaseModel):
+    contentType: str  # "post", "comment", "user", "message"
+    contentId: str
+    reason: str  # "spam", "harassment", "inappropriate", "violence", etc.
+    description: Optional[str] = None
+
 @api_router.post("/support/tickets", response_model=dict)
 async def create_support_ticket(ticket_data: SupportTicketCreate, current_user = Depends(get_current_user)):
     """Create a new support ticket"""
