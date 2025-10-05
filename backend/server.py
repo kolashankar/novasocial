@@ -4003,6 +4003,302 @@ async def get_story_analytics(
     
     return analytics
 
+# ====================================================================
+# PHASE 18: VIDEO FILTERS & AR EFFECTS FOR REELS
+# ====================================================================
+
+from models.reels_models import *
+import json
+
+# Mock cloud storage service for video processing
+class MockVideoProcessor:
+    """Mock video processing service for filters and AR effects"""
+    
+    @staticmethod
+    async def apply_filters_and_effects(video_data: str, filters: List[VideoFilter], ar_effects: List[AREffect]) -> dict:
+        """Mock video processing with filters and AR effects"""
+        # Simulate processing time
+        await asyncio.sleep(0.5)
+        
+        # Generate mock processed video URL
+        processed_video_id = str(uuid.uuid4())
+        processed_video_url = f"https://cdn.example.com/processed_videos/{processed_video_id}.mp4"
+        thumbnail_url = f"https://cdn.example.com/thumbnails/{processed_video_id}.jpg"
+        
+        return {
+            "processedVideoUrl": processed_video_url,
+            "thumbnailUrl": thumbnail_url,
+            "processingId": processed_video_id
+        }
+
+@api_router.post("/reels/upload")
+async def upload_reel_with_filters(
+    reel_data: ReelUploadRequest,
+    current_user = Depends(get_current_user)
+):
+    """Upload reel video with filters and AR effects"""
+    try:
+        reel_id = str(uuid.uuid4())
+        
+        # Validate video data
+        if not reel_data.videoData:
+            raise HTTPException(status_code=400, detail="Video data is required")
+        
+        # Mock original video upload
+        original_video_url = f"https://cdn.example.com/original_videos/{reel_id}.mp4"
+        
+        # Create metadata
+        metadata = ReelMetadata(
+            userId=current_user["id"],
+            videoUrl=original_video_url,
+            duration=15.0,  # Mock 15 seconds
+            resolution={"width": 720, "height": 1280},
+            fileSize=len(reel_data.videoData) * 3 // 4,  # Estimate from base64
+            format="mp4"
+        )
+        
+        # Process filters and effects
+        filters_and_effects = ReelFiltersAndEffects(
+            filters=reel_data.filters,
+            arEffects=reel_data.arEffects
+        )
+        
+        # Create reel object
+        new_reel = {
+            "id": reel_id,
+            "userId": current_user["id"],
+            "user": {k: v for k, v in current_user.items() if k not in ["password", "_id"]},
+            "caption": reel_data.caption,
+            "hashtags": reel_data.hashtags,
+            "videoUrl": original_video_url,
+            "processedVideoUrl": None,  # Will be set after processing
+            "thumbnailUrl": f"https://cdn.example.com/thumbnails/{reel_id}.jpg",
+            "metadata": metadata.dict(),
+            "filtersAndEffects": filters_and_effects.dict(),
+            "tags": reel_data.tags,
+            "locationTag": reel_data.locationTag,
+            "musicTrack": reel_data.musicTrack,
+            "privacy": reel_data.privacy,
+            "likes": [],
+            "likesCount": 0,
+            "comments": [],
+            "commentsCount": 0,
+            "shares": [],
+            "sharesCount": 0,
+            "views": [],
+            "viewsCount": 0,
+            "isProcessing": True,
+            "processingStatus": "processing",
+            "processingProgress": 0.0,
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
+        }
+        
+        # Save to database
+        await db.reels.insert_one(new_reel)
+        
+        # Start background processing
+        asyncio.create_task(process_reel_video(reel_id, reel_data.videoData, reel_data.filters, reel_data.arEffects))
+        
+        return {
+            "success": True,
+            "reelId": reel_id,
+            "message": "Reel uploaded successfully, processing filters and effects...",
+            "reel": {k: v for k, v in new_reel.items() if k != "_id"}
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+async def process_reel_video(reel_id: str, video_data: str, filters: List[VideoFilter], ar_effects: List[AREffect]):
+    """Background task to process reel video with filters and AR effects"""
+    try:
+        # Update processing progress
+        await db.reels.update_one(
+            {"id": reel_id},
+            {"$set": {"processingProgress": 25.0, "updatedAt": datetime.utcnow()}}
+        )
+        
+        # Simulate video processing
+        processed_result = await MockVideoProcessor.apply_filters_and_effects(video_data, filters, ar_effects)
+        
+        # Update progress to 75%
+        await db.reels.update_one(
+            {"id": reel_id},
+            {"$set": {"processingProgress": 75.0, "updatedAt": datetime.utcnow()}}
+        )
+        
+        # Complete processing
+        await db.reels.update_one(
+            {"id": reel_id},
+            {"$set": {
+                "processedVideoUrl": processed_result["processedVideoUrl"],
+                "thumbnailUrl": processed_result["thumbnailUrl"],
+                "isProcessing": False,
+                "processingStatus": "completed",
+                "processingProgress": 100.0,
+                "updatedAt": datetime.utcnow()
+            }}
+        )
+        
+    except Exception as e:
+        # Mark as failed
+        await db.reels.update_one(
+            {"id": reel_id},
+            {"$set": {
+                "isProcessing": False,
+                "processingStatus": "failed",
+                "processingProgress": 0.0,
+                "updatedAt": datetime.utcnow()
+            }}
+        )
+
+@api_router.get("/reels/processing/{reel_id}")
+async def get_reel_processing_status(
+    reel_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get processing status of a reel"""
+    reel = await db.reels.find_one({"id": reel_id}, {"_id": 0})
+    
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    
+    # Check if user owns the reel or if it's public
+    if reel["userId"] != current_user["id"] and reel["privacy"] != "public":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    return {
+        "reelId": reel_id,
+        "isProcessing": reel["isProcessing"],
+        "processingStatus": reel["processingStatus"],
+        "processingProgress": reel["processingProgress"],
+        "processedVideoUrl": reel.get("processedVideoUrl"),
+        "thumbnailUrl": reel["thumbnailUrl"]
+    }
+
+@api_router.get("/reels/filters/presets")
+async def get_filter_presets():
+    """Get available filter presets"""
+    return {
+        "filters": [filter_data.dict() for filter_data in PRESET_FILTERS.values()],
+        "arEffects": [effect_data.dict() for effect_data in PRESET_AR_EFFECTS.values()]
+    }
+
+@api_router.get("/reels/feed")
+async def get_reels_feed(
+    skip: int = 0,
+    limit: int = 20,
+    current_user = Depends(get_current_user)
+):
+    """Get personalized reels feed"""
+    # Get reels with privacy filtering
+    reels_cursor = db.reels.find({
+        "$or": [
+            {"privacy": "public"},
+            {"userId": current_user["id"]},
+            {"privacy": "followers", "userId": {"$in": []}}  # TODO: Add follower logic
+        ],
+        "processingStatus": "completed"
+    }).sort("createdAt", -1).skip(skip).limit(limit)
+    
+    reels = await reels_cursor.to_list(limit)
+    
+    # Clean up reels data
+    cleaned_reels = []
+    for reel in reels:
+        cleaned_reel = {k: v for k, v in reel.items() if k != "_id"}
+        cleaned_reels.append(cleaned_reel)
+    
+    return cleaned_reels
+
+@api_router.post("/reels/{reel_id}/like")
+async def toggle_reel_like(
+    reel_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Toggle like on a reel"""
+    reel = await db.reels.find_one({"id": reel_id})
+    
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    
+    user_id = current_user["id"]
+    likes = reel.get("likes", [])
+    
+    if user_id in likes:
+        # Unlike
+        await db.reels.update_one(
+            {"id": reel_id},
+            {
+                "$pull": {"likes": user_id},
+                "$inc": {"likesCount": -1},
+                "$set": {"updatedAt": datetime.utcnow()}
+            }
+        )
+        action = "unliked"
+    else:
+        # Like
+        await db.reels.update_one(
+            {"id": reel_id},
+            {
+                "$addToSet": {"likes": user_id},
+                "$inc": {"likesCount": 1},
+                "$set": {"updatedAt": datetime.utcnow()}
+            }
+        )
+        action = "liked"
+    
+    return {"success": True, "action": action}
+
+@api_router.post("/reels/{reel_id}/view")
+async def add_reel_view(
+    reel_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Add a view to a reel"""
+    reel = await db.reels.find_one({"id": reel_id})
+    
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    
+    user_id = current_user["id"]
+    views = reel.get("views", [])
+    
+    # Only count unique views
+    if user_id not in views:
+        await db.reels.update_one(
+            {"id": reel_id},
+            {
+                "$addToSet": {"views": user_id},
+                "$inc": {"viewsCount": 1},
+                "$set": {"updatedAt": datetime.utcnow()}
+            }
+        )
+    
+    return {"success": True, "message": "View recorded"}
+
+@api_router.delete("/reels/{reel_id}")
+async def delete_reel(
+    reel_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a reel"""
+    reel = await db.reels.find_one({"id": reel_id})
+    
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    
+    if reel["userId"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Can only delete your own reels")
+    
+    # Delete the reel
+    await db.reels.delete_one({"id": reel_id})
+    
+    # TODO: Delete associated files from cloud storage
+    
+    return {"success": True, "message": "Reel deleted successfully"}
+
 # Export the Socket.IO ASGI app for uvicorn
 # This enables Socket.IO functionality
 if __name__ == "__main__":
