@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-Backend Testing Script for Phase 15 - UI/UX & Accessibility Improvements
-Tests all Phase 15 endpoints for NovaSocial app
+Backend Testing for Phase 16 & 17 - Social Media App
+Testing newly implemented Posting & Media Enhancements and Story & Creative Tools endpoints
 """
 
 import requests
 import json
+import base64
+import uuid
+from datetime import datetime, timedelta
+import os
 import sys
-import time
-from datetime import datetime
-from typing import Dict, Any, Optional
 
-# Configuration
-BASE_URL = "https://social-stories-hub-1.preview.emergentagent.com/api"
-TEST_USER_EMAIL = "alice.johnson@example.com"
-TEST_USER_PASSWORD = "SecurePass123!"
-TEST_USER_FULLNAME = "Alice Johnson"
-TEST_USER_USERNAME = "alice_johnson"
+# Get backend URL from frontend .env
+BACKEND_URL = "https://social-stories-hub-1.preview.emergentagent.com/api"
+
+# Test data
+TEST_USER_DATA = {
+    "fullName": "Test User Phase16",
+    "username": "testuser_phase16",
+    "email": "testuser_phase16@example.com",
+    "password": "testpassword123"
+}
+
+# Sample base64 image for testing
+SAMPLE_IMAGE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 
 class BackendTester:
     def __init__(self):
