@@ -4551,10 +4551,15 @@ async def generate_caption_and_hashtags(
     """Generate AI-powered captions and hashtags for media"""
     try:
         # Get the Emergent LLM key for AI integration
-        from emergentintegrations import EmergentLLMClient
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         
         # Initialize AI client with Emergent LLM key
-        ai_client = EmergentLLMClient()
+        emergent_llm_key = os.getenv("EMERGENT_LLM_KEY")
+        ai_client = LlmChat(
+            api_key=emergent_llm_key,
+            session_id=f"caption_gen_{current_user['id']}_{str(uuid.uuid4())}",
+            system_message="You are an AI assistant that generates engaging social media captions and hashtags."
+        ).with_model("openai", "gpt-4o-mini")
         
         # Analyze the media content (mock analysis for now since we can't process actual images)
         media_analysis_prompt = f"""
