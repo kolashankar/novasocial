@@ -171,26 +171,14 @@ class EmailService:
         return self._send_email(to_email, subject, html_content)
     
     def _send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        """Internal method to send email via SendGrid"""
+        """Mock email sending for development"""
         try:
-            message = Mail(
-                from_email=self.sender_email,
-                to_emails=to_email,
-                subject=subject,
-                html_content=html_content
-            )
-            
-            response = self.sg.send(message)
-            
-            if response.status_code == 202:
-                logger.info(f"Email sent successfully to {to_email}")
-                return True
-            else:
-                logger.error(f"Failed to send email to {to_email}. Status: {response.status_code}")
-                return False
-                
+            logger.info(f"MOCK EMAIL SENT to {to_email}")
+            logger.info(f"Subject: {subject}")
+            logger.info(f"Content preview: {html_content[:100]}...")
+            return True
         except Exception as e:
-            logger.error(f"Error sending email to {to_email}: {str(e)}")
+            logger.error(f"Error in mock email service: {str(e)}")
             return False
 
 # Global email service instance
