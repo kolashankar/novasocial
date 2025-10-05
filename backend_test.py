@@ -97,285 +97,557 @@ class BackendTester:
             self.log_result("Authentication Setup", False, "", str(e))
             return False
     
-    def test_support_system(self):
-        """Test support system endpoints"""
-        print("\n📞 Testing Support System Endpoints...")
+    def test_phase16_endpoints(self):
+        """Test Phase 16 - Posting & Media Enhancements endpoints"""
+        print("🚀 Testing Phase 16 - Posting & Media Enhancements Endpoints...")
         
-        # Test 1: Create support ticket - Bug report
-        ticket_data = {
-            "category": "bug",
-            "subject": "App crashes when uploading large images",
-            "description": "The app consistently crashes when I try to upload images larger than 10MB. This happens on both iOS and Android devices. Steps to reproduce: 1. Open camera 2. Take high-res photo 3. Try to post 4. App crashes",
-            "attachments": []
-        }
+        # 1. Test Tag Search API
+        self.test_tag_search()
         
-        success, result = self.make_request("POST", "/support/tickets", ticket_data)
-        if success and result["status_code"] == 200:
-            ticket_id = result["response"].get("ticketId")
-            self.log_result("Create Support Ticket (Bug)", True, f"Bug report ticket created: {ticket_id}")
-        else:
-            self.log_result("Create Support Ticket (Bug)", False, "Failed to create bug report ticket", result)
+        # 2. Test Enhanced Post Creation
+        post_id = self.test_enhanced_post_creation()
         
-        # Test 2: Create support ticket - Harassment report
-        harassment_ticket = {
-            "category": "harassment",
-            "subject": "User sending inappropriate messages",
-            "description": "User @baduser123 has been sending me threatening messages and inappropriate content. I have screenshots as evidence.",
-            "attachments": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="]
-        }
+        # 3. Test Location-based Posts
+        self.test_location_posts()
         
-        success, result = self.make_request("POST", "/support/tickets", harassment_ticket)
-        if success and result["status_code"] == 200:
-            self.log_result("Create Support Ticket (Harassment)", True, "Harassment report ticket created")
-        else:
-            self.log_result("Create Support Ticket (Harassment)", False, "Failed to create harassment ticket", result)
+        # 4. Test Enhanced Story/Reel Creation
+        story_id = self.test_enhanced_story_creation()
         
-        # Test 3: Create support ticket - Technical issue
-        tech_ticket = {
-            "category": "technical",
-            "subject": "Push notifications not working",
-            "description": "I'm not receiving any push notifications even though they're enabled in settings. I've tried restarting the app and my phone.",
-            "attachments": []
-        }
+        # 5. Test Upload Progress Tracking
+        self.test_upload_progress()
         
-        success, result = self.make_request("POST", "/support/tickets", tech_ticket)
-        if success and result["status_code"] == 200:
-            self.log_result("Create Support Ticket (Technical)", True, "Technical support ticket created")
-        else:
-            self.log_result("Create Support Ticket (Technical)", False, "Failed to create technical ticket", result)
-        
-        # Test 4: Get user support tickets
-        success, result = self.make_request("GET", "/support/tickets")
-        if success and result["status_code"] == 200:
-            tickets = result["response"]
-            if isinstance(tickets, list) and len(tickets) >= 3:
-                self.log_result("Get User Support Tickets", True, f"Retrieved {len(tickets)} support tickets")
-            else:
-                self.log_result("Get User Support Tickets", False, f"Expected at least 3 tickets, got {len(tickets) if isinstance(tickets, list) else 0}")
-        else:
-            self.log_result("Get User Support Tickets", False, "Failed to retrieve support tickets", result)
-        
-        # Test 5: Get FAQ entries
-        success, result = self.make_request("GET", "/support/faq", auth_required=False)
-        if success and result["status_code"] == 200:
-            faqs = result["response"]
-            if isinstance(faqs, list) and len(faqs) > 0:
-                self.log_result("Get FAQ Entries", True, f"Retrieved {len(faqs)} FAQ entries")
-            else:
-                self.log_result("Get FAQ Entries", False, "No FAQ entries found")
-        else:
-            self.log_result("Get FAQ Entries", False, "Failed to retrieve FAQ entries", result)
-        
-        # Test 6: Search FAQ - password query
-        success, result = self.make_request("GET", "/support/faq/search", params={"q": "password"}, auth_required=False)
-        if success and result["status_code"] == 200:
-            search_results = result["response"].get("results", [])
-            if len(search_results) > 0:
-                self.log_result("Search FAQ (password)", True, f"Found {len(search_results)} FAQ entries for 'password'")
-            else:
-                self.log_result("Search FAQ (password)", True, "No FAQ entries found for 'password' (expected)")
-        else:
-            self.log_result("Search FAQ (password)", False, "Failed to search FAQ", result)
-        
-        # Test 7: Search FAQ - privacy query
-        success, result = self.make_request("GET", "/support/faq/search", params={"q": "private"}, auth_required=False)
-        if success and result["status_code"] == 200:
-            search_results = result["response"].get("results", [])
-            self.log_result("Search FAQ (private)", True, f"Found {len(search_results)} FAQ entries for 'private'")
-        else:
-            self.log_result("Search FAQ (private)", False, "Failed to search FAQ for 'private'", result)
+        # 6. Test Tag Validation & Privacy
+        self.test_tag_validation_privacy()
     
-    def test_app_information(self):
-        """Test app information endpoint"""
-        print("\n📱 Testing App Information Endpoint...")
+    def test_tag_search(self):
+        """Test tag search endpoints"""
+        print("  Testing Tag Search API...")
         
-        success, result = self.make_request("GET", "/app/info", auth_required=False)
-        if success and result["status_code"] == 200:
-            app_info = result["response"]
-            required_fields = ["version", "buildNumber", "platform", "features", "supportEmail"]
-            missing_fields = [field for field in required_fields if field not in app_info]
+        # Test user search
+        try:
+            response = self.session.get(f"{BACKEND_URL}/search/tags?q=john&type=users&limit=10")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Tag Search - Users", True, f"Found {len(data.get('users', []))} users")
+            else:
+                self.log_result("Tag Search - Users", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Tag Search - Users", False, "", str(e))
+        
+        # Test location search
+        try:
+            response = self.session.get(f"{BACKEND_URL}/search/tags?q=park&type=locations&limit=10")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Tag Search - Locations", True, f"Found {len(data.get('locations', []))} locations")
+            else:
+                self.log_result("Tag Search - Locations", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Tag Search - Locations", False, "", str(e))
+        
+        # Test combined search
+        try:
+            response = self.session.get(f"{BACKEND_URL}/search/tags?q=central")
+            if response.status_code == 200:
+                data = response.json()
+                users_count = len(data.get('users', []))
+                locations_count = len(data.get('locations', []))
+                self.log_result("Tag Search - Combined", True, f"Found {users_count} users, {locations_count} locations")
+            else:
+                self.log_result("Tag Search - Combined", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Tag Search - Combined", False, "", str(e))
+    
+    def test_enhanced_post_creation(self):
+        """Test enhanced post creation with tags and location"""
+        print("  Testing Enhanced Post Creation...")
+        
+        post_data = {
+            "caption": "Great day at the park!",
+            "media": [SAMPLE_IMAGE_B64],
+            "mediaTypes": ["image"],
+            "taggedUsers": [{"userId": self.user_id, "position": {"x": 0.5, "y": 0.3}}],
+            "location": {
+                "id": "loc_1",
+                "name": "Central Park",
+                "coordinates": {"lat": 40.785091, "lng": -73.968285}
+            }
+        }
+        
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/posts/enhanced",
+                json=post_data,
+                headers={"Content-Type": "application/json"}
+            )
             
-            if not missing_fields:
-                features = app_info.get("features", [])
-                self.log_result("Get App Info", True, f"App info retrieved with {len(features)} features")
+            if response.status_code in [200, 201]:
+                data = response.json()
+                post_id = data.get("id")
+                self.log_result("Enhanced Post Creation", True, f"Post ID: {post_id}")
+                return post_id
             else:
-                self.log_result("Get App Info", False, f"Missing required fields: {missing_fields}", app_info)
-        else:
-            self.log_result("Get App Info", False, "Failed to retrieve app information", result)
+                self.log_result("Enhanced Post Creation", False, "", f"Status: {response.status_code}, Response: {response.text}")
+                return None
+        except Exception as e:
+            self.log_result("Enhanced Post Creation", False, "", str(e))
+            return None
     
-    def test_theme_settings(self):
-        """Test theme settings endpoints"""
-        print("\n🎨 Testing Theme Settings Endpoints...")
+    def test_location_posts(self):
+        """Test location-based posts retrieval"""
+        print("  Testing Location-based Posts...")
         
-        # Test 1: Get theme settings (should return defaults)
-        success, result = self.make_request("GET", "/settings/theme")
-        if success and result["status_code"] == 200:
-            theme_settings = result["response"]
-            required_fields = ["themeMode", "primaryColor", "accentColor", "fontSize", "fontFamily"]
-            missing_fields = [field for field in required_fields if field not in theme_settings]
+        try:
+            response = self.session.get(f"{BACKEND_URL}/locations/loc_1/posts")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Location Posts", True, f"Found {len(data)} posts at location")
+            else:
+                self.log_result("Location Posts", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Location Posts", False, "", str(e))
+    
+    def test_enhanced_story_creation(self):
+        """Test enhanced story/reel creation"""
+        print("  Testing Enhanced Story/Reel Creation...")
+        
+        story_data = {
+            "contentType": "story",
+            "media": SAMPLE_IMAGE_B64,
+            "mediaType": "image",
+            "text": "Test story",
+            "effects": [{"type": "filter", "name": "vintage"}],
+            "tags": [{"type": "location", "data": {"name": "Central Park"}}]
+        }
+        
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/stories/enhanced",
+                json=story_data,
+                headers={"Content-Type": "application/json"}
+            )
             
-            if not missing_fields:
-                self.log_result("Get Theme Settings", True, f"Theme settings retrieved: {theme_settings.get('themeMode', 'unknown')} mode")
+            if response.status_code in [200, 201]:
+                data = response.json()
+                story_id = data.get("id")
+                self.log_result("Enhanced Story Creation", True, f"Story ID: {story_id}")
+                return story_id
             else:
-                self.log_result("Get Theme Settings", False, f"Missing required fields: {missing_fields}", theme_settings)
-        else:
-            self.log_result("Get Theme Settings", False, "Failed to retrieve theme settings", result)
+                self.log_result("Enhanced Story Creation", False, "", f"Status: {response.status_code}, Response: {response.text}")
+                return None
+        except Exception as e:
+            self.log_result("Enhanced Story Creation", False, "", str(e))
+            return None
+    
+    def test_upload_progress(self):
+        """Test upload progress tracking"""
+        print("  Testing Upload Progress Tracking...")
         
-        # Test 2: Update theme settings - Dark mode
-        dark_theme_update = {
-            "themeMode": "dark",
-            "primaryColor": "#1E1E1E",
-            "accentColor": "#BB86FC",
-            "fontSize": "large",
-            "highContrast": True,
-            "reduceMotion": False
-        }
-        
-        success, result = self.make_request("PUT", "/settings/theme", dark_theme_update)
-        if success and result["status_code"] == 200:
-            self.log_result("Update Theme Settings (Dark)", True, "Dark theme settings updated successfully")
-        else:
-            self.log_result("Update Theme Settings (Dark)", False, "Failed to update dark theme settings", result)
-        
-        # Test 3: Update theme settings - Light mode with accessibility
-        light_theme_update = {
-            "themeMode": "light",
-            "primaryColor": "#007AFF",
-            "accentColor": "#FF3B30",
-            "fontSize": "medium",
-            "fontFamily": "system",
-            "highContrast": False,
-            "reduceMotion": True,
-            "colorBlindMode": "deuteranopia"
-        }
-        
-        success, result = self.make_request("PUT", "/settings/theme", light_theme_update)
-        if success and result["status_code"] == 200:
-            self.log_result("Update Theme Settings (Light + Accessibility)", True, "Light theme with accessibility settings updated")
-        else:
-            self.log_result("Update Theme Settings (Light + Accessibility)", False, "Failed to update light theme settings", result)
-        
-        # Test 4: Verify theme settings were updated
-        success, result = self.make_request("GET", "/settings/theme")
-        if success and result["status_code"] == 200:
-            theme_settings = result["response"]
-            if (theme_settings.get("themeMode") == "light" and 
-                theme_settings.get("reduceMotion") == True and
-                theme_settings.get("colorBlindMode") == "deuteranopia"):
-                self.log_result("Verify Theme Settings Update", True, "Theme settings correctly updated and persisted")
+        # Test upload progress check
+        upload_id = str(uuid.uuid4())
+        try:
+            response = self.session.get(f"{BACKEND_URL}/upload/progress/{upload_id}")
+            if response.status_code in [200, 404]:  # 404 is expected for non-existent upload
+                if response.status_code == 200:
+                    data = response.json()
+                    self.log_result("Upload Progress Check", True, f"Progress: {data.get('progress', 0)}%")
+                else:
+                    self.log_result("Upload Progress Check", True, "Upload not found (expected)")
             else:
-                self.log_result("Verify Theme Settings Update", False, "Theme settings not properly updated", theme_settings)
-        else:
-            self.log_result("Verify Theme Settings Update", False, "Failed to verify theme settings update", result)
-    
-    def test_authentication_signout(self):
-        """Test authentication sign-out endpoint"""
-        print("\n🔐 Testing Authentication Sign-out...")
+                self.log_result("Upload Progress Check", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Upload Progress Check", False, "", str(e))
         
-        success, result = self.make_request("POST", "/auth/sign-out")
-        if success and result["status_code"] == 200:
-            response_data = result["response"]
-            if response_data.get("success") == True:
-                self.log_result("Sign Out", True, "User signed out successfully with session cleanup")
+        # Test upload retry
+        try:
+            response = self.session.post(f"{BACKEND_URL}/upload/retry/{upload_id}")
+            if response.status_code in [200, 404]:  # 404 is expected for non-existent upload
+                self.log_result("Upload Retry", True, "Retry endpoint accessible")
             else:
-                self.log_result("Sign Out", False, "Sign out response missing success flag", response_data)
-        else:
-            self.log_result("Sign Out", False, "Failed to sign out user", result)
+                self.log_result("Upload Retry", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Upload Retry", False, "", str(e))
     
-    def test_content_reporting(self):
-        """Test content reporting endpoint"""
-        print("\n🚨 Testing Content Reporting...")
+    def test_tag_validation_privacy(self):
+        """Test tag validation and privacy checks"""
+        print("  Testing Tag Validation & Privacy...")
         
-        # First, re-authenticate since we signed out
-        if not self.setup_test_user():
-            self.log_result("Re-authentication for Content Reporting", False, "Failed to re-authenticate")
-            return
-        
-        # Test 1: Report a post for spam
-        post_report = {
-            "contentType": "post",
-            "contentId": "test_post_123",
-            "reason": "spam",
-            "description": "This post contains spam content promoting fake products and services. It's clearly not genuine content."
+        # Test tag validation
+        validation_data = {
+            "postId": str(uuid.uuid4()),
+            "taggedUserIds": [self.user_id],
+            "locationId": "loc_1"
         }
         
-        success, result = self.make_request("POST", "/reports/content", post_report)
-        if success and result["status_code"] == 200:
-            report_id = result["response"].get("reportId")
-            self.log_result("Report Content (Post - Spam)", True, f"Post reported for spam: {report_id}")
-        else:
-            self.log_result("Report Content (Post - Spam)", False, "Failed to report post for spam", result)
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/posts/validate-tags",
+                json=validation_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Tag Validation", True, f"Valid: {data.get('isValid', False)}")
+            else:
+                self.log_result("Tag Validation", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Tag Validation", False, "", str(e))
         
-        # Test 2: Report a comment for harassment
-        comment_report = {
-            "contentType": "comment",
-            "contentId": "test_comment_456",
-            "reason": "harassment",
-            "description": "This comment contains threatening language and personal attacks against other users."
+        # Test privacy check
+        privacy_data = {
+            "userId": self.user_id,
+            "targetUserId": self.user_id,
+            "action": "tag"
         }
         
-        success, result = self.make_request("POST", "/reports/content", comment_report)
-        if success and result["status_code"] == 200:
-            self.log_result("Report Content (Comment - Harassment)", True, "Comment reported for harassment")
-        else:
-            self.log_result("Report Content (Comment - Harassment)", False, "Failed to report comment for harassment", result)
-        
-        # Test 3: Report a user for inappropriate behavior
-        user_report = {
-            "contentType": "user",
-            "contentId": "test_user_789",
-            "reason": "inappropriate",
-            "description": "This user has been posting inappropriate content and sending unwanted messages to multiple users."
-        }
-        
-        success, result = self.make_request("POST", "/reports/content", user_report)
-        if success and result["status_code"] == 200:
-            self.log_result("Report Content (User - Inappropriate)", True, "User reported for inappropriate behavior")
-        else:
-            self.log_result("Report Content (User - Inappropriate)", False, "Failed to report user", result)
-        
-        # Test 4: Report a message for violence
-        message_report = {
-            "contentType": "message",
-            "contentId": "test_message_101",
-            "reason": "violence",
-            "description": "This message contains violent threats and graphic content that violates community guidelines."
-        }
-        
-        success, result = self.make_request("POST", "/reports/content", message_report)
-        if success and result["status_code"] == 200:
-            self.log_result("Report Content (Message - Violence)", True, "Message reported for violence")
-        else:
-            self.log_result("Report Content (Message - Violence)", False, "Failed to report message for violence", result)
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/privacy/check",
+                json=privacy_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Privacy Check", True, f"Allowed: {data.get('isAllowed', False)}")
+            else:
+                self.log_result("Privacy Check", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Privacy Check", False, "", str(e))
     
-    def run_all_tests(self):
-        """Run all Phase 15 endpoint tests"""
-        print("🚀 Starting Phase 15 Backend Endpoint Testing...")
-        print(f"Backend URL: {self.base_url}")
-        print("=" * 60)
+    def test_phase17_endpoints(self):
+        """Test Phase 17 - Story & Creative Tools endpoints"""
+        print("🎨 Testing Phase 17 - Story & Creative Tools Endpoints...")
         
-        # Setup test user
-        if not self.setup_test_user():
-            print("❌ Failed to setup test user. Aborting tests.")
-            return False
+        # Create a test story first
+        story_id = self.create_test_story()
         
-        # Run all test suites
-        self.test_support_system()
-        self.test_app_information()
-        self.test_theme_settings()
-        self.test_authentication_signout()
-        self.test_content_reporting()
+        if story_id:
+            # 1. Test Story Stickers Management
+            self.test_story_stickers(story_id)
+            
+            # 2. Test Interactive Elements
+            self.test_interactive_elements(story_id)
         
-        # Print summary
-        self.print_summary()
+        # 3. Test Creative Libraries
+        self.test_creative_libraries()
         
-        return True
+        # 4. Test Collaborative Prompts
+        self.test_collaborative_prompts()
+        
+        # 5. Test Story Analytics
+        if story_id:
+            self.test_story_analytics(story_id)
+    
+    def create_test_story(self):
+        """Create a test story for Phase 17 testing"""
+        story_data = {
+            "media": SAMPLE_IMAGE_B64,
+            "mediaType": "image",
+            "text": "Test story for Phase 17"
+        }
+        
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/stories",
+                json=story_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                story_id = data.get("id")
+                self.log_result("Test Story Creation", True, f"Story ID: {story_id}")
+                return story_id
+            else:
+                self.log_result("Test Story Creation", False, "", f"Status: {response.status_code}")
+                return None
+        except Exception as e:
+            self.log_result("Test Story Creation", False, "", str(e))
+            return None
+    
+    def test_story_stickers(self, story_id):
+        """Test story stickers management"""
+        print("  Testing Story Stickers Management...")
+        
+        # Test adding sticker
+        sticker_data = {
+            "type": "location",
+            "data": {"name": "Central Park", "coordinates": {"lat": 40.785091, "lng": -73.968285}},
+            "position": {"x": 0.5, "y": 0.3, "rotation": 0, "scale": 1.0},
+            "zIndex": 1
+        }
+        
+        sticker_id = None
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/stories/{story_id}/stickers",
+                json=sticker_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                sticker_id = data.get("id")
+                self.log_result("Add Story Sticker", True, f"Sticker ID: {sticker_id}")
+            else:
+                self.log_result("Add Story Sticker", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Add Story Sticker", False, "", str(e))
+        
+        # Test getting stickers
+        try:
+            response = self.session.get(f"{BACKEND_URL}/stories/{story_id}/stickers")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Get Story Stickers", True, f"Found {len(data)} stickers")
+            else:
+                self.log_result("Get Story Stickers", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Get Story Stickers", False, "", str(e))
+        
+        # Test updating sticker (if we have a sticker_id)
+        if sticker_id:
+            update_data = {
+                "position": {"x": 0.6, "y": 0.4, "rotation": 15, "scale": 1.2}
+            }
+            
+            try:
+                response = self.session.put(
+                    f"{BACKEND_URL}/stories/stickers/{sticker_id}",
+                    json=update_data,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    self.log_result("Update Story Sticker", True, "Sticker updated successfully")
+                else:
+                    self.log_result("Update Story Sticker", False, "", f"Status: {response.status_code}")
+            except Exception as e:
+                self.log_result("Update Story Sticker", False, "", str(e))
+            
+            # Test deleting sticker
+            try:
+                response = self.session.delete(f"{BACKEND_URL}/stories/stickers/{sticker_id}")
+                if response.status_code in [200, 204]:
+                    self.log_result("Delete Story Sticker", True, "Sticker deleted successfully")
+                else:
+                    self.log_result("Delete Story Sticker", False, "", f"Status: {response.status_code}")
+            except Exception as e:
+                self.log_result("Delete Story Sticker", False, "", str(e))
+    
+    def test_creative_libraries(self):
+        """Test creative libraries endpoints"""
+        print("  Testing Creative Libraries...")
+        
+        # Test music library
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/music")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Music Library", True, f"Found {len(data)} music items")
+            else:
+                self.log_result("Music Library", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Music Library", False, "", str(e))
+        
+        # Test music search
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/music?category=trending&search=upbeat")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Music Search", True, f"Found {len(data)} matching items")
+            else:
+                self.log_result("Music Search", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Music Search", False, "", str(e))
+        
+        # Test GIF library
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/gifs")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("GIF Library", True, f"Found {len(data)} GIF items")
+            else:
+                self.log_result("GIF Library", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("GIF Library", False, "", str(e))
+        
+        # Test GIF search
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/gifs?search=happy")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("GIF Search", True, f"Found {len(data)} matching GIFs")
+            else:
+                self.log_result("GIF Search", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("GIF Search", False, "", str(e))
+        
+        # Test frames library
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/frames")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Frames Library", True, f"Found {len(data)} frame templates")
+            else:
+                self.log_result("Frames Library", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Frames Library", False, "", str(e))
+        
+        # Test colors library
+        try:
+            response = self.session.get(f"{BACKEND_URL}/creative/colors")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Colors Library", True, f"Found {len(data)} color palettes")
+            else:
+                self.log_result("Colors Library", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Colors Library", False, "", str(e))
+    
+    def test_interactive_elements(self, story_id):
+        """Test interactive elements"""
+        print("  Testing Interactive Elements...")
+        
+        # Test adding interactive element (poll)
+        element_data = {
+            "type": "poll",
+            "question": "What's your favorite color?",
+            "options": ["Red", "Blue", "Green", "Yellow"]
+        }
+        
+        element_id = None
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/stories/{story_id}/interactive",
+                json=element_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                element_id = data.get("id")
+                self.log_result("Add Interactive Element", True, f"Element ID: {element_id}")
+            else:
+                self.log_result("Add Interactive Element", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Add Interactive Element", False, "", str(e))
+        
+        # Test responding to interactive element
+        if element_id:
+            response_data = {
+                "response": {"selectedOption": 1, "optionText": "Blue"}
+            }
+            
+            try:
+                response = self.session.post(
+                    f"{BACKEND_URL}/interactive/{element_id}/respond",
+                    json=response_data,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    self.log_result("Respond to Interactive Element", True, "Response recorded")
+                else:
+                    self.log_result("Respond to Interactive Element", False, "", f"Status: {response.status_code}")
+            except Exception as e:
+                self.log_result("Respond to Interactive Element", False, "", str(e))
+            
+            # Test getting interactive results
+            try:
+                response = self.session.get(f"{BACKEND_URL}/interactive/{element_id}/results")
+                if response.status_code == 200:
+                    data = response.json()
+                    self.log_result("Get Interactive Results", True, f"Total responses: {len(data.get('responses', []))}")
+                else:
+                    self.log_result("Get Interactive Results", False, "", f"Status: {response.status_code}")
+            except Exception as e:
+                self.log_result("Get Interactive Results", False, "", str(e))
+    
+    def test_collaborative_prompts(self):
+        """Test collaborative prompts"""
+        print("  Testing Collaborative Prompts...")
+        
+        # Test creating collaborative prompt
+        prompt_data = {
+            "promptText": "Show me your morning routine!",
+            "category": "lifestyle",
+            "tags": ["morning", "routine", "lifestyle"]
+        }
+        
+        prompt_id = None
+        try:
+            response = self.session.post(
+                f"{BACKEND_URL}/collaborative/prompts",
+                json=prompt_data,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                prompt_id = data.get("id")
+                self.log_result("Create Collaborative Prompt", True, f"Prompt ID: {prompt_id}")
+            else:
+                self.log_result("Create Collaborative Prompt", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Create Collaborative Prompt", False, "", str(e))
+        
+        # Test participating in prompt
+        if prompt_id:
+            participation_data = {
+                "response": {
+                    "media": SAMPLE_IMAGE_B64,
+                    "text": "My morning routine includes coffee and stretching!"
+                }
+            }
+            
+            try:
+                response = self.session.post(
+                    f"{BACKEND_URL}/collaborative/prompts/{prompt_id}/participate",
+                    json=participation_data,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    self.log_result("Participate in Prompt", True, "Participation recorded")
+                else:
+                    self.log_result("Participate in Prompt", False, "", f"Status: {response.status_code}")
+            except Exception as e:
+                self.log_result("Participate in Prompt", False, "", str(e))
+        
+        # Test getting trending prompts
+        try:
+            response = self.session.get(f"{BACKEND_URL}/collaborative/prompts/trending")
+            if response.status_code == 200:
+                data = response.json()
+                self.log_result("Get Trending Prompts", True, f"Found {len(data)} trending prompts")
+            else:
+                self.log_result("Get Trending Prompts", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Get Trending Prompts", False, "", str(e))
+    
+    def test_story_analytics(self, story_id):
+        """Test story analytics"""
+        print("  Testing Story Analytics...")
+        
+        try:
+            response = self.session.get(f"{BACKEND_URL}/stories/{story_id}/analytics")
+            if response.status_code == 200:
+                data = response.json()
+                views = data.get("views", 0)
+                self.log_result("Story Analytics", True, f"Views: {views}, Engagement: {data.get('engagement', {})}")
+            else:
+                self.log_result("Story Analytics", False, "", f"Status: {response.status_code}")
+        except Exception as e:
+            self.log_result("Story Analytics", False, "", str(e))
     
     def print_summary(self):
-        """Print test results summary"""
-        print("\n" + "=" * 60)
-        print("📊 TEST RESULTS SUMMARY")
-        print("=" * 60)
+        """Print test summary"""
+        print("\n" + "="*80)
+        print("📊 TEST SUMMARY")
+        print("="*80)
         
         total_tests = len(self.test_results)
         passed_tests = sum(1 for result in self.test_results if result["success"])
@@ -387,20 +659,38 @@ class BackendTester:
         print(f"Success Rate: {(passed_tests/total_tests)*100:.1f}%")
         
         if failed_tests > 0:
-            print("\n❌ FAILED TESTS:")
+            print(f"\n🔍 FAILED TESTS:")
             for result in self.test_results:
                 if not result["success"]:
-                    print(f"  - {result['test']}: {result['message']}")
+                    print(f"  ❌ {result['test']}: {result['error']}")
         
-        print("\n" + "=" * 60)
+        print("\n" + "="*80)
+        
+        return passed_tests, failed_tests
 
 def main():
-    """Main function to run the tests"""
+    """Main test execution"""
+    print("🧪 Starting Backend Testing for Phase 16 & 17")
+    print("="*80)
+    
     tester = BackendTester()
-    success = tester.run_all_tests()
+    
+    # Setup authentication
+    if not tester.setup_auth():
+        print("❌ Authentication setup failed. Cannot proceed with tests.")
+        return
+    
+    # Run Phase 16 tests
+    tester.test_phase16_endpoints()
+    
+    # Run Phase 17 tests
+    tester.test_phase17_endpoints()
+    
+    # Print summary
+    passed, failed = tester.print_summary()
     
     # Exit with appropriate code
-    sys.exit(0 if success else 1)
+    sys.exit(0 if failed == 0 else 1)
 
 if __name__ == "__main__":
     main()
