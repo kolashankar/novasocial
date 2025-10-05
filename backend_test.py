@@ -139,44 +139,49 @@ class ReelsBackendTester:
         # 9. Test Reel Deletion (last)
         self.test_delete_reel()
     
-    def test_tag_search(self):
-        """Test tag search endpoints"""
-        print("  Testing Tag Search API...")
+    def test_get_filter_presets(self):
+        """Test GET /api/reels/filters/presets - Get available filter presets and AR effects"""
+        print("  Testing Filter Presets API...")
         
-        # Test user search
         try:
-            response = self.session.get(f"{BACKEND_URL}/search/tags?q=john&type=users&limit=10")
+            response = self.session.get(f"{BACKEND_URL}/reels/filters/presets")
             if response.status_code == 200:
                 data = response.json()
-                self.log_result("Tag Search - Users", True, f"Found {len(data.get('users', []))} users")
+                
+                # Validate response structure
+                if "filters" in data and "arEffects" in data:
+                    filters_count = len(data["filters"])
+                    ar_effects_count = len(data["arEffects"])
+                    
+                    # Check for expected preset filters
+                    filter_names = [f["name"] for f in data["filters"]]
+                    expected_filters = ["vintage", "dramatic", "soft_glow", "black_white"]
+                    
+                    # Check for expected AR effects
+                    ar_effect_names = [e["name"] for e in data["arEffects"]]
+                    expected_ar_effects = ["heart_eyes", "dog_ears", "sparkles"]
+                    
+                    missing_filters = [f for f in expected_filters if f not in filter_names]
+                    missing_ar_effects = [e for e in expected_ar_effects if e not in ar_effect_names]
+                    
+                    if not missing_filters and not missing_ar_effects:
+                        self.log_result(
+                            "Get Filter Presets", 
+                            True, 
+                            f"Retrieved {filters_count} filters and {ar_effects_count} AR effects"
+                        )
+                    else:
+                        self.log_result(
+                            "Get Filter Presets", 
+                            False, 
+                            f"Missing filters: {missing_filters}, Missing AR effects: {missing_ar_effects}"
+                        )
+                else:
+                    self.log_result("Get Filter Presets", False, "", "Invalid response structure")
             else:
-                self.log_result("Tag Search - Users", False, "", f"Status: {response.status_code}")
+                self.log_result("Get Filter Presets", False, "", f"Status: {response.status_code}, Response: {response.text}")
         except Exception as e:
-            self.log_result("Tag Search - Users", False, "", str(e))
-        
-        # Test location search
-        try:
-            response = self.session.get(f"{BACKEND_URL}/search/tags?q=park&type=locations&limit=10")
-            if response.status_code == 200:
-                data = response.json()
-                self.log_result("Tag Search - Locations", True, f"Found {len(data.get('locations', []))} locations")
-            else:
-                self.log_result("Tag Search - Locations", False, "", f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("Tag Search - Locations", False, "", str(e))
-        
-        # Test combined search
-        try:
-            response = self.session.get(f"{BACKEND_URL}/search/tags?q=central")
-            if response.status_code == 200:
-                data = response.json()
-                users_count = len(data.get('users', []))
-                locations_count = len(data.get('locations', []))
-                self.log_result("Tag Search - Combined", True, f"Found {users_count} users, {locations_count} locations")
-            else:
-                self.log_result("Tag Search - Combined", False, "", f"Status: {response.status_code}")
-        except Exception as e:
-            self.log_result("Tag Search - Combined", False, "", str(e))
+            self.log_result("Get Filter Presets", False, "", str(e))
     
     def test_enhanced_post_creation(self):
         """Test enhanced post creation with tags and location"""
