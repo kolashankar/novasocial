@@ -3144,10 +3144,24 @@ async def get_status_checks():
     return [StatusCheck(**status_check) for status_check in status_checks]
 
 
-# Start cleanup task and include router
-@app.on_event("startup")
-async def startup_event():
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Modern lifespan events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     asyncio.create_task(cleanup_expired_stories())
+    yield
+    # Shutdown
+    client.close()
+
+# Create the main app with lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -3159,17 +3173,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
 
 # PHASE 16: POSTING & MEDIA ENHANCEMENTS ENDPOINTS
 
