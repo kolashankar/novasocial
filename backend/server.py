@@ -474,6 +474,286 @@ async def get_current_user_profile(current_user = Depends(get_current_user)):
     return UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
 
 
+# PHASE 11: Authentication Enhancements
+from models.auth_models import *
+from utils.email_service import email_service
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """Send password reset verification code via email"""
+    user = await db.users.find_one({"email": request.email})
+    
+    if not user:
+        # Return success even if user not found for security
+        return {"success": True, "message": "If the email exists, a reset code has been sent"}
+    
+    # Generate verification code
+    verification_code = email_service.generate_verification_code()
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    
+    # Store verification code
+    code_data = VerificationCode(
+        id=str(uuid.uuid4()),
+        email=request.email,
+        code=verification_code,
+        purpose="password_reset",
+        expires_at=expires_at
+    )
+    
+    await db.verification_codes.insert_one(code_data.dict())
+    
+    # Send email
+    success = email_service.send_password_reset_email(
+        request.email, 
+        verification_code, 
+        user.get("fullName", "User")
+    )
+    
+    # Log security event
+    audit_log = SecurityAuditLog(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        event_type=SecurityEventType.PASSWORD_RESET_REQUEST,
+        metadata={"email": request.email, "success": success}
+    )
+    await db.security_audit_logs.insert_one(audit_log.dict())
+    
+    return {"success": True, "message": "If the email exists, a reset code has been sent"}
+
+@api_router.post("/auth/reset-password")
+async def reset_password(request: PasswordResetRequest):
+    """Reset password using verification code"""
+    # Find valid verification code
+    code = await db.verification_codes.find_one({
+        "email": request.email,
+        "code": request.verification_code,
+        "purpose": "password_reset",
+        "used": False,
+        "expires_at": {"$gt": datetime.utcnow()}
+    })
+    
+    if not code:
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid or expired verification code"
+        )
+    
+    # Validate new password
+    if not validate_password(request.new_password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 8 characters long"
+        )
+    
+    # Find user
+    user = await db.users.find_one({"email": request.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Update password
+    new_password_hash = get_password_hash(request.new_password)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password": new_password_hash}}
+    )
+    
+    # Mark verification code as used
+    await db.verification_codes.update_one(
+        {"id": code["id"]},
+        {"$set": {"used": True}}
+    )
+    
+    # Store password history
+    password_history = PasswordHistoryEntry(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        password_hash=new_password_hash
+    )
+    await db.password_history.insert_one(password_history.dict())
+    
+    # Log security event
+    audit_log = SecurityAuditLog(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        event_type=SecurityEventType.PASSWORD_RESET_COMPLETE,
+        metadata={"email": request.email}
+    )
+    await db.security_audit_logs.insert_one(audit_log.dict())
+    
+    return {"success": True, "message": "Password reset successfully"}
+
+@api_router.post("/auth/change-password")
+async def change_password(request: ChangePasswordRequest, current_user = Depends(get_current_user)):
+    """Change password with current password confirmation"""
+    # Verify current password
+    if not verify_password(request.current_password, current_user["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    # Validate new password
+    if not validate_password(request.new_password):
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be at least 8 characters long"
+        )
+    
+    # Check if new password is different from current
+    if verify_password(request.new_password, current_user["password"]):
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be different from current password"
+        )
+    
+    # Update password
+    new_password_hash = get_password_hash(request.new_password)
+    await db.users.update_one(
+        {"id": current_user["id"]},
+        {"$set": {"password": new_password_hash}}
+    )
+    
+    # Store password history
+    password_history = PasswordHistoryEntry(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        password_hash=new_password_hash
+    )
+    await db.password_history.insert_one(password_history.dict())
+    
+    # Send confirmation email
+    email_service.send_password_change_confirmation(
+        current_user["email"],
+        current_user.get("fullName", "User")
+    )
+    
+    # Log security event
+    audit_log = SecurityAuditLog(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        event_type=SecurityEventType.PASSWORD_CHANGE,
+        metadata={"email": current_user["email"]}
+    )
+    await db.security_audit_logs.insert_one(audit_log.dict())
+    
+    return {"success": True, "message": "Password changed successfully"}
+
+@api_router.post("/auth/deactivate-account")
+async def deactivate_account(
+    request: AccountDeactivationRequest, 
+    current_user = Depends(get_current_user)
+):
+    """Deactivate user account temporarily"""
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="Account deactivation must be confirmed")
+    
+    # Update account status
+    now = datetime.utcnow()
+    account_status = UserAccountStatus(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        status=AccountStatus.DEACTIVATED,
+        deactivated_at=now,
+        deactivation_reason=request.reason
+    )
+    
+    await db.user_account_status.replace_one(
+        {"user_id": current_user["id"]},
+        account_status.dict(),
+        upsert=True
+    )
+    
+    # Log security event
+    audit_log = SecurityAuditLog(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        event_type=SecurityEventType.ACCOUNT_DEACTIVATED,
+        metadata={"reason": request.reason}
+    )
+    await db.security_audit_logs.insert_one(audit_log.dict())
+    
+    return {"success": True, "message": "Account deactivated successfully"}
+
+@api_router.post("/auth/delete-account")
+async def delete_account(
+    request: AccountDeletionRequest,
+    current_user = Depends(get_current_user)
+):
+    """Schedule account for permanent deletion"""
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="Account deletion must be confirmed")
+    
+    # Verify password
+    if not verify_password(request.password, current_user["password"]):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    
+    # Schedule deletion (30 days from now)
+    now = datetime.utcnow()
+    deletion_date = now + timedelta(days=30)
+    
+    account_status = UserAccountStatus(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        status=AccountStatus.DELETED,
+        deleted_at=now,
+        deletion_scheduled_at=deletion_date
+    )
+    
+    await db.user_account_status.replace_one(
+        {"user_id": current_user["id"]},
+        account_status.dict(),
+        upsert=True
+    )
+    
+    # Send confirmation email
+    email_service.send_account_deletion_confirmation(
+        current_user["email"],
+        current_user.get("fullName", "User"),
+        deletion_date
+    )
+    
+    # Log security event
+    audit_log = SecurityAuditLog(
+        id=str(uuid.uuid4()),
+        user_id=current_user["id"],
+        event_type=SecurityEventType.ACCOUNT_DELETED,
+        metadata={"scheduled_deletion": deletion_date.isoformat()}
+    )
+    await db.security_audit_logs.insert_one(audit_log.dict())
+    
+    export_data = None
+    if request.export_data:
+        # Generate user data export
+        user_posts = await db.posts.find({"authorId": current_user["id"]}).to_list(None)
+        user_comments = await db.comments.find({"authorId": current_user["id"]}).to_list(None)
+        user_stories = await db.stories.find({"authorId": current_user["id"]}).to_list(None)
+        
+        export_data = {
+            "user_profile": {k: v for k, v in current_user.items() if k != "password"},
+            "posts": user_posts,
+            "comments": user_comments,
+            "stories": user_stories,
+            "export_date": now.isoformat()
+        }
+    
+    return {
+        "success": True,
+        "message": f"Account scheduled for deletion on {deletion_date.strftime('%B %d, %Y')}",
+        "deletion_date": deletion_date.isoformat(),
+        "export_data": export_data
+    }
+
+@api_router.get("/auth/security-logs")
+async def get_security_logs(
+    current_user = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get user's security audit logs"""
+    logs = await db.security_audit_logs.find({
+        "user_id": current_user["id"]
+    }).sort("timestamp", -1).skip(skip).limit(limit).to_list(limit)
+    
+    return logs
+
+
 # Posts Routes
 @api_router.post("/posts", response_model=PostResponse)
 async def create_post(post_data: PostCreate, current_user = Depends(get_current_user)):
