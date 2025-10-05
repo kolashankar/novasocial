@@ -2873,7 +2873,7 @@ async def get_user_support_tickets(current_user = Depends(get_current_user), ski
     """Get user's support tickets"""
     tickets = await db.support_tickets.find({
         "userId": current_user["id"]
-    }).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    }, {"_id": 0}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
     
     return tickets
 
