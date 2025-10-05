@@ -150,3 +150,12 @@ class MessageQueue(BaseModel):
     nextRetryAt: Optional[datetime] = None
     createdAt: datetime
     status: str = "pending"  # "pending", "sent", "failed"
+
+
+class ConversationSettings(BaseModel):
+    conversationId: str
+    isArchived: bool = False
+    isMuted: bool = False
+    muteUntil: Optional[datetime] = None
+    customNotificationSound: Optional[str] = None
+    isBlocked: bool = False
