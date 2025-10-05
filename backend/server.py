@@ -1456,6 +1456,419 @@ async def get_messages(conversation_id: str, current_user = Depends(get_current_
     return result
 
 
+# PHASE 14: Enhanced Messaging & Real-time Features
+
+@api_router.get("/conversations/filters", response_model=List[ConversationResponse])
+async def get_filtered_conversations(
+    filter_type: str = "all",  # "all", "unread", "groups", "direct", "archived", "muted"
+    search_query: str = None,
+    current_user = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get conversations with advanced filters"""
+    # Build filter query
+    base_filter = {"participantIds": current_user["id"]}
+    
+    if filter_type == "groups":
+        base_filter["isGroup"] = True
+    elif filter_type == "direct":
+        base_filter["isGroup"] = False
+    elif filter_type == "archived":
+        base_filter["isArchived"] = True
+    elif filter_type == "muted":
+        base_filter["isMuted"] = True
+    
+    # For unread, we'll filter after getting conversations
+    conversations = await db.conversations.find(base_filter).sort("updatedAt", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Apply search filter
+    if search_query:
+        # Search in conversation names and participant names
+        participant_ids = []
+        for conv in conversations:
+            participant_ids.extend(conv["participantIds"])
+        
+        matching_users = await db.users.find({
+            "$or": [
+                {"fullName": {"$regex": search_query, "$options": "i"}},
+                {"username": {"$regex": search_query, "$options": "i"}}
+            ]
+        }).to_list(None)
+        
+        matching_user_ids = [user["id"] for user in matching_users]
+        conversations = [conv for conv in conversations if 
+                        (conv.get("name") and search_query.lower() in conv["name"].lower()) or
+                        any(pid in matching_user_ids for pid in conv["participantIds"])]
+    
+    result = []
+    for conv in conversations:
+        # Get participants
+        participants = await db.users.find({"id": {"$in": conv["participantIds"]}}).to_list(len(conv["participantIds"]))
+        participants_response = [UserResponse(**{k: v for k, v in p.items() if k != "password"}) for p in participants]
+        
+        # Get last message
+        last_message = await db.messages.find_one(
+            {"conversationId": conv["id"]},
+            sort=[("createdAt", -1)]
+        )
+        
+        last_message_response = None
+        if last_message:
+            sender = await db.users.find_one({"id": last_message["senderId"]})
+            if sender:
+                sender_response = UserResponse(**{k: v for k, v in sender.items() if k != "password"})
+                last_message_response = MessageResponse(**last_message, sender=sender_response)
+        
+        # Calculate unread count
+        unread_count = await db.messages.count_documents({
+            "conversationId": conv["id"],
+            "senderId": {"$ne": current_user["id"]},
+            "readBy.userId": {"$ne": current_user["id"]}
+        })
+        
+        # Apply unread filter
+        if filter_type == "unread" and unread_count == 0:
+            continue
+        
+        result.append(ConversationResponse(
+            **conv,
+            participants=participants_response,
+            lastMessage=last_message_response,
+            unreadCount=unread_count
+        ))
+    
+    return result
+
+@api_router.put("/conversations/{conversation_id}/settings")
+async def update_conversation_settings(
+    conversation_id: str,
+    settings: ConversationSettings,
+    current_user = Depends(get_current_user)
+):
+    """Update conversation settings (archive, mute, etc.)"""
+    # Verify user is participant
+    conversation = await db.conversations.find_one({
+        "id": conversation_id,
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Update conversation settings
+    update_data = {
+        "isArchived": settings.isArchived,
+        "isMuted": settings.isMuted,
+        "updatedAt": datetime.utcnow()
+    }
+    
+    if settings.muteUntil:
+        update_data["muteUntil"] = settings.muteUntil
+    
+    await db.conversations.update_one(
+        {"id": conversation_id},
+        {"$set": update_data}
+    )
+    
+    return {"success": True, "message": "Conversation settings updated"}
+
+@api_router.post("/conversations/{conversation_id}/typing")
+async def send_typing_indicator(
+    conversation_id: str,
+    typing_data: TypingIndicator,
+    current_user = Depends(get_current_user)
+):
+    """Send typing indicator to conversation participants"""
+    # Verify user is participant
+    conversation = await db.conversations.find_one({
+        "id": conversation_id,
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Emit typing indicator via Socket.IO
+    await sio.emit('user_typing', {
+        'conversationId': conversation_id,
+        'userId': current_user["id"],
+        'username': current_user["username"],
+        'isTyping': typing_data.isTyping
+    }, room=f"conversation_{conversation_id}")
+    
+    return {"success": True}
+
+@api_router.put("/messages/{message_id}/read")
+async def mark_message_read(
+    message_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Mark a specific message as read"""
+    message = await db.messages.find_one({"id": message_id})
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Check if user is participant
+    conversation = await db.conversations.find_one({
+        "id": message["conversationId"],
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Update read status
+    await db.messages.update_one(
+        {"id": message_id},
+        {
+            "$addToSet": {
+                "readBy": {
+                    "userId": current_user["id"],
+                    "readAt": datetime.utcnow()
+                }
+            }
+        }
+    )
+    
+    # Emit read receipt
+    await sio.emit('message_read', {
+        'messageId': message_id,
+        'conversationId': message["conversationId"],
+        'userId': current_user["id"]
+    }, room=f"conversation_{message['conversationId']}")
+    
+    return {"success": True}
+
+@api_router.put("/conversations/{conversation_id}/read-all")
+async def mark_all_messages_read(
+    conversation_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Mark all messages in a conversation as read"""
+    # Verify user is participant
+    conversation = await db.conversations.find_one({
+        "id": conversation_id,
+        "participantIds": current_user["id"]
+    })
+    
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Get all unread messages
+    unread_messages = await db.messages.find({
+        "conversationId": conversation_id,
+        "senderId": {"$ne": current_user["id"]},
+        "readBy.userId": {"$ne": current_user["id"]}
+    }).to_list(None)
+    
+    # Mark all as read
+    for message in unread_messages:
+        await db.messages.update_one(
+            {"id": message["id"]},
+            {
+                "$addToSet": {
+                    "readBy": {
+                        "userId": current_user["id"],
+                        "readAt": datetime.utcnow()
+                    }
+                }
+            }
+        )
+    
+    # Emit batch read receipt
+    if unread_messages:
+        message_ids = [msg["id"] for msg in unread_messages]
+        await sio.emit('messages_read_batch', {
+            'messageIds': message_ids,
+            'conversationId': conversation_id,
+            'userId': current_user["id"]
+        }, room=f"conversation_{conversation_id}")
+    
+    return {"success": True, "messagesRead": len(unread_messages)}
+
+@api_router.get("/users/{user_id}/activity")
+async def get_user_activity(user_id: str, current_user = Depends(get_current_user)):
+    """Get user's online status and activity"""
+    # Check if users are connected (followers, mutual follows, or in same conversation)
+    # For now, allowing all users to see activity status
+    
+    activity = await db.user_activities.find_one({"userId": user_id})
+    
+    if not activity:
+        # Return default offline status
+        return {
+            "userId": user_id,
+            "status": "offline",
+            "lastSeen": datetime.utcnow() - timedelta(hours=1),
+            "isOnline": False
+        }
+    
+    return {
+        "userId": user_id,
+        "status": activity.get("status", "offline"),
+        "lastSeen": activity.get("lastSeen"),
+        "isOnline": activity.get("status") == "online"
+    }
+
+@api_router.put("/user/activity")
+async def update_user_activity(
+    status: str,  # "online", "offline", "away", "busy"
+    current_user = Depends(get_current_user)
+):
+    """Update current user's activity status"""
+    now = datetime.utcnow()
+    
+    activity_data = {
+        "userId": current_user["id"],
+        "status": status,
+        "lastSeen": now,
+        "updatedAt": now
+    }
+    
+    await db.user_activities.replace_one(
+        {"userId": current_user["id"]},
+        activity_data,
+        upsert=True
+    )
+    
+    # Broadcast status to relevant conversations
+    # Get user's conversations
+    conversations = await db.conversations.find({
+        "participantIds": current_user["id"]
+    }).to_list(None)
+    
+    for conv in conversations:
+        await sio.emit('user_status_change', {
+            'userId': current_user["id"],
+            'status': status,
+            'lastSeen': now.isoformat()
+        }, room=f"conversation_{conv['id']}")
+    
+    return {"success": True, "status": status}
+
+@api_router.post("/messages/queue")
+async def queue_offline_message(
+    message_data: MessageCreate,
+    current_user = Depends(get_current_user)
+):
+    """Queue message for offline sending"""
+    # Create message queue entry
+    queue_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    queue_entry = {
+        "id": queue_id,
+        "userId": current_user["id"],
+        "conversationId": message_data.conversationId,
+        "messageData": message_data.dict(),
+        "retryCount": 0,
+        "maxRetries": 3,
+        "nextRetryAt": now + timedelta(seconds=30),
+        "createdAt": now,
+        "status": "pending"
+    }
+    
+    await db.message_queue.insert_one(queue_entry)
+    
+    return {"success": True, "queueId": queue_id}
+
+@api_router.post("/messages/sync")
+async def sync_offline_messages(current_user = Depends(get_current_user)):
+    """Sync and send queued messages when back online"""
+    # Get pending messages for user
+    pending_messages = await db.message_queue.find({
+        "userId": current_user["id"],
+        "status": "pending"
+    }).to_list(None)
+    
+    sent_count = 0
+    failed_count = 0
+    
+    for queue_entry in pending_messages:
+        try:
+            # Extract message data
+            message_data = MessageCreate(**queue_entry["messageData"])
+            
+            # Send the message (reuse existing send_message logic)
+            message_id = str(uuid.uuid4())
+            now = datetime.utcnow()
+            
+            new_message = {
+                "id": message_id,
+                "conversationId": message_data.conversationId,
+                "senderId": current_user["id"],
+                "text": message_data.text,
+                "messageType": message_data.messageType,
+                "media": message_data.media,
+                "replyTo": message_data.replyTo,
+                "readBy": [{
+                    "userId": current_user["id"],
+                    "readAt": now
+                }],
+                "createdAt": now,
+                "updatedAt": now
+            }
+            
+            await db.messages.insert_one(new_message)
+            
+            # Update conversation
+            await db.conversations.update_one(
+                {"id": message_data.conversationId},
+                {"$set": {"updatedAt": now}}
+            )
+            
+            # Mark queue entry as sent
+            await db.message_queue.update_one(
+                {"id": queue_entry["id"]},
+                {"$set": {"status": "sent", "sentAt": now}}
+            )
+            
+            # Emit real-time message
+            sender = UserResponse(**{k: v for k, v in current_user.items() if k != "password"})
+            message_response = MessageResponse(**new_message, sender=sender)
+            
+            await sio.emit('new_message', {
+                'conversationId': message_data.conversationId,
+                'message': message_response.dict()
+            }, room=f"conversation_{message_data.conversationId}")
+            
+            sent_count += 1
+            
+        except Exception as e:
+            # Increment retry count
+            retry_count = queue_entry["retryCount"] + 1
+            next_retry = datetime.utcnow() + timedelta(seconds=30 * retry_count)
+            
+            if retry_count >= queue_entry["maxRetries"]:
+                # Mark as failed
+                await db.message_queue.update_one(
+                    {"id": queue_entry["id"]},
+                    {"$set": {"status": "failed", "error": str(e)}}
+                )
+                failed_count += 1
+            else:
+                # Schedule retry
+                await db.message_queue.update_one(
+                    {"id": queue_entry["id"]},
+                    {
+                        "$set": {
+                            "retryCount": retry_count,
+                            "nextRetryAt": next_retry,
+                            "lastError": str(e)
+                        }
+                    }
+                )
+    
+    return {
+        "success": True,
+        "sentCount": sent_count,
+        "failedCount": failed_count,
+        "totalProcessed": len(pending_messages)
+    }
+
+
 # Stories Routes
 @api_router.post("/stories", response_model=StoryResponse)
 async def create_story(story_data: StoryCreate, current_user = Depends(get_current_user)):
