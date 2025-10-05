@@ -59,14 +59,41 @@ export default function ChangePassword() {
 
     setLoading(true);
     try {
-      // This would be implemented when the backend has a change password endpoint
-      Alert.alert(
-        'Feature Coming Soon',
-        'Password change functionality will be available soon. For now, you can reset your password from the login screen.',
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+      const API_BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+      
+      const response = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user?.token}`,
+        },
+        body: JSON.stringify({
+          current_password: formData.currentPassword,
+          new_password: formData.newPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert(
+          'Password Changed',
+          'Your password has been successfully changed. You will receive a confirmation email shortly.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+        
+        // Reset form
+        setFormData({
+          currentPassword: '',
+          newPassword: '',
+          confirmPassword: '',
+        });
+      } else {
+        Alert.alert('Error', data.detail || 'Failed to change password. Please try again.');
+      }
     } catch (error) {
-      Alert.alert('Error', 'Failed to change password. Please try again.');
+      console.error('Change password error:', error);
+      Alert.alert('Error', 'Network error. Please try again.');
     } finally {
       setLoading(false);
     }
