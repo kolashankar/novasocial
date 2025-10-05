@@ -4299,6 +4299,945 @@ async def delete_reel(
     
     return {"success": True, "message": "Reel deleted successfully"}
 
+#====================================================================================================
+# PHASE 19 - END-TO-END ENCRYPTED CHATS
+#====================================================================================================
+
+# Pydantic models for encrypted messaging
+class EncryptedMessage(BaseModel):
+    conversationId: str
+    encryptedContent: str  # Base64 encoded encrypted message
+    messageType: str = "text"  # "text", "image", "voice"
+    nonce: str  # Base64 encoded nonce for encryption
+    recipientId: str
+
+class EncryptedMessageResponse(BaseModel):
+    id: str
+    conversationId: str
+    senderId: str
+    recipientId: str
+    encryptedContent: str
+    messageType: str
+    nonce: str
+    timestamp: datetime
+    delivered: bool = False
+    read: bool = False
+
+class OfflineMessageQueue(BaseModel):
+    id: str
+    recipientId: str
+    messages: List[EncryptedMessageResponse]
+    createdAt: datetime
+
+# Socket.IO connection manager for encrypted chats
+connected_users = {}
+
+@sio.event
+async def connect(sid, environ):
+    """Handle client connection"""
+    print(f"Client {sid} connected")
+
+@sio.event
+async def disconnect(sid):
+    """Handle client disconnection"""
+    print(f"Client {sid} disconnected")
+    # Remove from connected users
+    user_id = None
+    for uid, user_sid in connected_users.items():
+        if user_sid == sid:
+            user_id = uid
+            break
+    if user_id:
+        del connected_users[user_id]
+
+@sio.event
+async def join_user(sid, data):
+    """Join user to their personal room for receiving messages"""
+    user_id = data.get('userId')
+    if user_id:
+        connected_users[user_id] = sid
+        await sio.enter_room(sid, f"user_{user_id}")
+        print(f"User {user_id} joined room user_{user_id}")
+
+@sio.event
+async def send_encrypted_message(sid, data):
+    """Handle sending encrypted messages via Socket.IO"""
+    try:
+        # Validate message data
+        message_data = EncryptedMessage(**data)
+        
+        # Store encrypted message in database
+        message_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+        
+        encrypted_message = {
+            "id": message_id,
+            "conversationId": message_data.conversationId,
+            "senderId": data.get("senderId"),
+            "recipientId": message_data.recipientId,
+            "encryptedContent": message_data.encryptedContent,
+            "messageType": message_data.messageType,
+            "nonce": message_data.nonce,
+            "timestamp": now,
+            "delivered": False,
+            "read": False
+        }
+        
+        await db.encrypted_messages.insert_one(encrypted_message)
+        
+        # Try to deliver message in real-time
+        recipient_sid = connected_users.get(message_data.recipientId)
+        if recipient_sid:
+            # Recipient is online, deliver immediately
+            await sio.emit('new_encrypted_message', {
+                "id": message_id,
+                "conversationId": message_data.conversationId,
+                "senderId": data.get("senderId"),
+                "encryptedContent": message_data.encryptedContent,
+                "messageType": message_data.messageType,
+                "nonce": message_data.nonce,
+                "timestamp": now.isoformat()
+            }, room=f"user_{message_data.recipientId}")
+            
+            # Mark as delivered
+            await db.encrypted_messages.update_one(
+                {"id": message_id},
+                {"$set": {"delivered": True}}
+            )
+        else:
+            # Recipient is offline, add to offline queue
+            await add_to_offline_queue(message_data.recipientId, encrypted_message)
+        
+        # Confirm to sender
+        await sio.emit('message_sent', {
+            "messageId": message_id,
+            "delivered": recipient_sid is not None
+        }, room=sid)
+        
+    except Exception as e:
+        await sio.emit('error', {"message": str(e)}, room=sid)
+
+async def add_to_offline_queue(recipient_id: str, message: dict):
+    """Add message to offline queue for later delivery"""
+    # Check if offline queue exists for user
+    offline_queue = await db.offline_message_queues.find_one({"recipientId": recipient_id})
+    
+    if offline_queue:
+        # Add to existing queue
+        await db.offline_message_queues.update_one(
+            {"recipientId": recipient_id},
+            {"$push": {"messages": message}}
+        )
+    else:
+        # Create new queue
+        queue_id = str(uuid.uuid4())
+        new_queue = {
+            "id": queue_id,
+            "recipientId": recipient_id,
+            "messages": [message],
+            "createdAt": datetime.utcnow()
+        }
+        await db.offline_message_queues.insert_one(new_queue)
+
+@api_router.get("/encrypted-chats/{conversation_id}/messages")
+async def get_encrypted_messages(
+    conversation_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    current_user = Depends(get_current_user)
+):
+    """Get encrypted messages for a conversation"""
+    # Verify user has access to this conversation
+    conversation = await db.conversations.find_one({"id": conversation_id})
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if current_user["id"] not in conversation.get("participants", []):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get encrypted messages
+    cursor = db.encrypted_messages.find(
+        {"conversationId": conversation_id}
+    ).sort("timestamp", -1).skip(offset).limit(limit)
+    
+    messages = []
+    async for message in cursor:
+        messages.append(EncryptedMessageResponse(**message))
+    
+    return {"messages": messages[::-1]}  # Return in chronological order
+
+@api_router.post("/encrypted-chats/offline-messages")
+async def get_offline_messages(current_user = Depends(get_current_user)):
+    """Get and clear offline messages for current user"""
+    user_id = current_user["id"]
+    
+    # Get offline queue
+    offline_queue = await db.offline_message_queues.find_one({"recipientId": user_id})
+    
+    if not offline_queue:
+        return {"messages": []}
+    
+    messages = offline_queue.get("messages", [])
+    
+    # Clear offline queue
+    await db.offline_message_queues.delete_one({"recipientId": user_id})
+    
+    # Mark messages as delivered
+    message_ids = [msg["id"] for msg in messages]
+    await db.encrypted_messages.update_many(
+        {"id": {"$in": message_ids}},
+        {"$set": {"delivered": True}}
+    )
+    
+    return {"messages": messages}
+
+@api_router.put("/encrypted-chats/messages/{message_id}/read")
+async def mark_encrypted_message_read(
+    message_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Mark an encrypted message as read"""
+    # Verify message belongs to current user
+    message = await db.encrypted_messages.find_one({
+        "id": message_id,
+        "recipientId": current_user["id"]
+    })
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Mark as read
+    await db.encrypted_messages.update_one(
+        {"id": message_id},
+        {"$set": {"read": True}}
+    )
+    
+    # Notify sender via Socket.IO
+    sender_sid = connected_users.get(message["senderId"])
+    if sender_sid:
+        await sio.emit('message_read', {
+            "messageId": message_id,
+            "conversationId": message["conversationId"]
+        }, room=f"user_{message['senderId']}")
+    
+    return {"success": True}
+
+#====================================================================================================
+# PHASE 20 - AI-BASED CAPTION & HASHTAG GENERATOR
+#====================================================================================================
+
+class CaptionGenerationRequest(BaseModel):
+    mediaUrl: str
+    mediaType: str = "image"  # "image" or "video"
+    context: Optional[str] = None  # Optional context for better captions
+
+class CaptionSuggestion(BaseModel):
+    id: str
+    caption: str
+    hashtags: List[str]
+    confidence: float
+    category: str  # "lifestyle", "travel", "food", etc.
+
+class CaptionGenerationResponse(BaseModel):
+    suggestions: List[CaptionSuggestion]
+    mediaUrl: str
+    generatedAt: datetime
+
+@api_router.post("/ai/caption")
+async def generate_caption_and_hashtags(
+    request: CaptionGenerationRequest,
+    current_user = Depends(get_current_user)
+):
+    """Generate AI-powered captions and hashtags for media"""
+    try:
+        # Get the Emergent LLM key for AI integration
+        from emergentintegrations import EmergentLLMClient
+        
+        # Initialize AI client with Emergent LLM key
+        ai_client = EmergentLLMClient()
+        
+        # Analyze the media content (mock analysis for now since we can't process actual images)
+        media_analysis_prompt = f"""
+        Analyze this {request.mediaType} and generate 3 different engaging social media captions with relevant hashtags.
+        
+        Media URL: {request.mediaUrl}
+        Context: {request.context or "General social media post"}
+        
+        For each caption, provide:
+        1. An engaging caption (20-50 words)
+        2. 5-8 relevant hashtags
+        3. A category (lifestyle, travel, food, fashion, fitness, etc.)
+        4. A confidence score (0.0-1.0)
+        
+        Format the response as JSON with this structure:
+        {
+            "suggestions": [
+                {
+                    "caption": "Your engaging caption here...",
+                    "hashtags": ["hashtag1", "hashtag2", "hashtag3"],
+                    "category": "lifestyle",
+                    "confidence": 0.95
+                }
+            ]
+        }
+        """
+        
+        # Generate captions using AI
+        response = ai_client.generate_text(
+            prompt=media_analysis_prompt,
+            max_tokens=500,
+            temperature=0.7
+        )
+        
+        # Parse AI response (simplified - in production you'd have better parsing)
+        import json
+        try:
+            ai_result = json.loads(response)
+            suggestions = []
+            
+            for idx, suggestion in enumerate(ai_result.get("suggestions", [])):
+                suggestions.append(CaptionSuggestion(
+                    id=str(uuid.uuid4()),
+                    caption=suggestion["caption"],
+                    hashtags=suggestion["hashtags"],
+                    confidence=suggestion["confidence"],
+                    category=suggestion["category"]
+                ))
+        except:
+            # Fallback suggestions if AI parsing fails
+            suggestions = [
+                CaptionSuggestion(
+                    id=str(uuid.uuid4()),
+                    caption="Capturing the moment ✨",
+                    hashtags=["moment", "memories", "life", "photooftheday", "instagood"],
+                    confidence=0.85,
+                    category="lifestyle"
+                ),
+                CaptionSuggestion(
+                    id=str(uuid.uuid4()),
+                    caption="Living my best life! 🌟",
+                    hashtags=["bestlife", "happiness", "vibes", "positivity", "blessed"],
+                    confidence=0.80,
+                    category="lifestyle"
+                ),
+                CaptionSuggestion(
+                    id=str(uuid.uuid4()),
+                    caption="Here's to new adventures! 🚀",
+                    hashtags=["adventure", "newbeginnings", "explore", "journey", "wanderlust"],
+                    confidence=0.75,
+                    category="travel"
+                )
+            ]
+        
+        # Store generation history
+        generation_id = str(uuid.uuid4())
+        generation_record = {
+            "id": generation_id,
+            "userId": current_user["id"],
+            "mediaUrl": request.mediaUrl,
+            "mediaType": request.mediaType,
+            "context": request.context,
+            "suggestions": [suggestion.dict() for suggestion in suggestions],
+            "generatedAt": datetime.utcnow()
+        }
+        
+        await db.caption_generations.insert_one(generation_record)
+        
+        return CaptionGenerationResponse(
+            suggestions=suggestions,
+            mediaUrl=request.mediaUrl,
+            generatedAt=datetime.utcnow()
+        )
+        
+    except Exception as e:
+        print(f"Caption generation error: {e}")
+        # Return fallback captions on error
+        fallback_suggestions = [
+            CaptionSuggestion(
+                id=str(uuid.uuid4()),
+                caption="Making memories ✨",
+                hashtags=["memories", "life", "moments", "photooftheday"],
+                confidence=0.70,
+                category="general"
+            ),
+            CaptionSuggestion(
+                id=str(uuid.uuid4()),
+                caption="Good vibes only! 🌟",
+                hashtags=["goodvibes", "positivity", "happy", "blessed"],
+                confidence=0.65,
+                category="lifestyle"
+            )
+        ]
+        
+        return CaptionGenerationResponse(
+            suggestions=fallback_suggestions,
+            mediaUrl=request.mediaUrl,
+            generatedAt=datetime.utcnow()
+        )
+
+@api_router.get("/ai/caption/history")
+async def get_caption_generation_history(
+    limit: int = 20,
+    current_user = Depends(get_current_user)
+):
+    """Get user's caption generation history"""
+    cursor = db.caption_generations.find(
+        {"userId": current_user["id"]}
+    ).sort("generatedAt", -1).limit(limit)
+    
+    history = []
+    async for record in cursor:
+        history.append(CaptionGenerationResponse(**record))
+    
+    return {"history": history}
+
+#====================================================================================================
+# PHASE 21 - STORY HIGHLIGHTS & MEMORIES
+#====================================================================================================
+
+class HighlightCreate(BaseModel):
+    title: str
+    coverImageUrl: str
+    storyIds: List[str]
+    description: Optional[str] = None
+
+class HighlightResponse(BaseModel):
+    id: str
+    userId: str
+    title: str
+    coverImageUrl: str
+    description: Optional[str]
+    storyIds: List[str]
+    storiesCount: int
+    createdAt: datetime
+    updatedAt: datetime
+
+class MemoryResponse(BaseModel):
+    id: str
+    type: str  # "story", "post"
+    contentId: str
+    content: dict  # The actual story or post content
+    originalDate: datetime  # When it was originally created
+    anniversaryDate: datetime  # Current anniversary date
+
+@api_router.post("/highlights/create")
+async def create_story_highlight(
+    highlight_data: HighlightCreate,
+    current_user = Depends(get_current_user)
+):
+    """Create a new story highlight"""
+    # Verify all stories belong to current user and exist
+    user_id = current_user["id"]
+    
+    for story_id in highlight_data.storyIds:
+        story = await db.stories.find_one({"id": story_id, "authorId": user_id})
+        if not story:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Story {story_id} not found or doesn't belong to you"
+            )
+    
+    # Create highlight
+    highlight_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    highlight = {
+        "id": highlight_id,
+        "userId": user_id,
+        "title": highlight_data.title,
+        "coverImageUrl": highlight_data.coverImageUrl,
+        "description": highlight_data.description,
+        "storyIds": highlight_data.storyIds,
+        "storiesCount": len(highlight_data.storyIds),
+        "createdAt": now,
+        "updatedAt": now
+    }
+    
+    await db.highlights.insert_one(highlight)
+    
+    return HighlightResponse(**highlight)
+
+@api_router.get("/highlights/fetch")
+async def get_user_highlights(
+    user_id: Optional[str] = None,
+    current_user = Depends(get_current_user)
+):
+    """Get highlights for a user (current user if no user_id specified)"""
+    target_user_id = user_id or current_user["id"]
+    
+    cursor = db.highlights.find({"userId": target_user_id}).sort("createdAt", -1)
+    
+    highlights = []
+    async for highlight in cursor:
+        highlights.append(HighlightResponse(**highlight))
+    
+    return {"highlights": highlights}
+
+@api_router.put("/highlights/{highlight_id}")
+async def update_highlight(
+    highlight_id: str,
+    highlight_data: HighlightCreate,
+    current_user = Depends(get_current_user)
+):
+    """Update an existing highlight"""
+    # Verify highlight belongs to current user
+    highlight = await db.highlights.find_one({
+        "id": highlight_id,
+        "userId": current_user["id"]
+    })
+    
+    if not highlight:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    
+    # Verify all stories belong to current user
+    for story_id in highlight_data.storyIds:
+        story = await db.stories.find_one({"id": story_id, "authorId": current_user["id"]})
+        if not story:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Story {story_id} not found or doesn't belong to you"
+            )
+    
+    # Update highlight
+    update_data = {
+        "title": highlight_data.title,
+        "coverImageUrl": highlight_data.coverImageUrl,
+        "description": highlight_data.description,
+        "storyIds": highlight_data.storyIds,
+        "storiesCount": len(highlight_data.storyIds),
+        "updatedAt": datetime.utcnow()
+    }
+    
+    await db.highlights.update_one(
+        {"id": highlight_id},
+        {"$set": update_data}
+    )
+    
+    # Return updated highlight
+    updated_highlight = await db.highlights.find_one({"id": highlight_id})
+    return HighlightResponse(**updated_highlight)
+
+@api_router.delete("/highlights/{highlight_id}")
+async def delete_highlight(
+    highlight_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a highlight"""
+    result = await db.highlights.delete_one({
+        "id": highlight_id,
+        "userId": current_user["id"]
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    
+    return {"success": True, "message": "Highlight deleted"}
+
+@api_router.get("/memories/fetch")
+async def get_memories(
+    date: Optional[str] = None,  # Format: YYYY-MM-DD
+    current_user = Depends(get_current_user)
+):
+    """Get memories for a specific date or today's date"""
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        target_date = datetime.utcnow()
+    
+    user_id = current_user["id"]
+    
+    # Calculate date range for memories (same day in previous years)
+    current_year = target_date.year
+    target_day = target_date.day
+    target_month = target_date.month
+    
+    memories = []
+    
+    # Look for memories from previous years (up to 5 years back)
+    for year_offset in range(1, 6):
+        memory_year = current_year - year_offset
+        
+        try:
+            memory_date_start = datetime(memory_year, target_month, target_day)
+            memory_date_end = datetime(memory_year, target_month, target_day, 23, 59, 59)
+            
+            # Find stories from this date
+            story_cursor = db.stories.find({
+                "authorId": user_id,
+                "createdAt": {
+                    "$gte": memory_date_start,
+                    "$lte": memory_date_end
+                }
+            })
+            
+            async for story in story_cursor:
+                memories.append(MemoryResponse(
+                    id=str(uuid.uuid4()),
+                    type="story",
+                    contentId=story["id"],
+                    content=story,
+                    originalDate=story["createdAt"],
+                    anniversaryDate=target_date
+                ))
+            
+            # Find posts from this date
+            post_cursor = db.posts.find({
+                "authorId": user_id,
+                "createdAt": {
+                    "$gte": memory_date_start,
+                    "$lte": memory_date_end
+                }
+            })
+            
+            async for post in post_cursor:
+                memories.append(MemoryResponse(
+                    id=str(uuid.uuid4()),
+                    type="post",
+                    contentId=post["id"],
+                    content=post,
+                    originalDate=post["createdAt"],
+                    anniversaryDate=target_date
+                ))
+                
+        except ValueError:
+            # Skip February 29th for non-leap years
+            continue
+    
+    # Sort memories by original date
+    memories.sort(key=lambda x: x.originalDate, reverse=True)
+    
+    return {"memories": memories, "date": date or target_date.strftime("%Y-%m-%d")}
+
+#====================================================================================================
+# PHASE 22 - LIVE VIDEO STREAMING
+#====================================================================================================
+
+class LiveStreamCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    category: str = "general"
+    isPrivate: bool = False
+    maxViewers: Optional[int] = None
+
+class LiveStreamResponse(BaseModel):
+    id: str
+    userId: str
+    title: str
+    description: Optional[str]
+    category: str
+    isPrivate: bool
+    maxViewers: Optional[int]
+    streamKey: str
+    rtmpUrl: str
+    playbackUrl: str
+    status: str  # "preparing", "live", "ended"
+    viewerCount: int
+    totalViewers: int
+    startedAt: Optional[datetime]
+    endedAt: Optional[datetime]
+    createdAt: datetime
+
+class LiveStreamViewer(BaseModel):
+    userId: str
+    username: str
+    joinedAt: datetime
+
+# Live stream management
+active_streams = {}  # stream_id -> {viewers: set(), chat_room: str}
+
+@api_router.post("/live/start")
+async def start_live_stream(
+    stream_data: LiveStreamCreate,
+    current_user = Depends(get_current_user)
+):
+    """Start a new live stream"""
+    # Check if user already has an active stream
+    existing_stream = await db.live_streams.find_one({
+        "userId": current_user["id"],
+        "status": {"$in": ["preparing", "live"]}
+    })
+    
+    if existing_stream:
+        raise HTTPException(
+            status_code=400, 
+            detail="You already have an active stream"
+        )
+    
+    # Create stream record
+    stream_id = str(uuid.uuid4())
+    stream_key = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    # Mock RTMP URLs (in production, use actual streaming service)
+    rtmp_url = f"rtmp://streaming-server.example.com/live/{stream_key}"
+    playback_url = f"https://streaming-server.example.com/hls/{stream_id}/playlist.m3u8"
+    
+    stream = {
+        "id": stream_id,
+        "userId": current_user["id"],
+        "title": stream_data.title,
+        "description": stream_data.description,
+        "category": stream_data.category,
+        "isPrivate": stream_data.isPrivate,
+        "maxViewers": stream_data.maxViewers,
+        "streamKey": stream_key,
+        "rtmpUrl": rtmp_url,
+        "playbackUrl": playback_url,
+        "status": "preparing",
+        "viewerCount": 0,
+        "totalViewers": 0,
+        "startedAt": None,
+        "endedAt": None,
+        "createdAt": now
+    }
+    
+    await db.live_streams.insert_one(stream)
+    
+    # Initialize stream in memory
+    active_streams[stream_id] = {
+        "viewers": set(),
+        "chat_room": f"live_stream_{stream_id}"
+    }
+    
+    return LiveStreamResponse(**stream)
+
+@api_router.put("/live/{stream_id}/go-live")
+async def go_live(
+    stream_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Mark stream as live (called when RTMP connection starts)"""
+    stream = await db.live_streams.find_one({
+        "id": stream_id,
+        "userId": current_user["id"]
+    })
+    
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if stream["status"] != "preparing":
+        raise HTTPException(status_code=400, detail="Stream is not in preparing state")
+    
+    # Update stream status
+    now = datetime.utcnow()
+    await db.live_streams.update_one(
+        {"id": stream_id},
+        {
+            "$set": {
+                "status": "live",
+                "startedAt": now
+            }
+        }
+    )
+    
+    # Notify followers that stream is live (simplified notification)
+    # In production, you'd send push notifications to followers
+    
+    return {"success": True, "message": "Stream is now live"}
+
+@api_router.get("/live/{stream_id}")
+async def get_live_stream(stream_id: str):
+    """Get live stream details"""
+    stream = await db.live_streams.find_one({"id": stream_id})
+    
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    # Update viewer count from active streams
+    if stream_id in active_streams:
+        stream["viewerCount"] = len(active_streams[stream_id]["viewers"])
+    
+    return LiveStreamResponse(**stream)
+
+@api_router.post("/live/{stream_id}/join")
+async def join_live_stream(
+    stream_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Join a live stream as a viewer"""
+    stream = await db.live_streams.find_one({"id": stream_id})
+    
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if stream["status"] != "live":
+        raise HTTPException(status_code=400, detail="Stream is not live")
+    
+    # Check if private stream and user has permission
+    if stream["isPrivate"]:
+        # Add permission logic here (follow check, etc.)
+        pass
+    
+    # Check max viewers limit
+    if stream.get("maxViewers"):
+        current_viewers = len(active_streams.get(stream_id, {}).get("viewers", set()))
+        if current_viewers >= stream["maxViewers"]:
+            raise HTTPException(status_code=400, detail="Stream is at maximum capacity")
+    
+    # Add viewer to active stream
+    user_id = current_user["id"]
+    if stream_id not in active_streams:
+        active_streams[stream_id] = {"viewers": set(), "chat_room": f"live_stream_{stream_id}"}
+    
+    active_streams[stream_id]["viewers"].add(user_id)
+    
+    # Update total viewers count
+    await db.live_streams.update_one(
+        {"id": stream_id},
+        {
+            "$inc": {"totalViewers": 1},
+            "$set": {"viewerCount": len(active_streams[stream_id]["viewers"])}
+        }
+    )
+    
+    # Add viewer to chat room via Socket.IO
+    user_sid = connected_users.get(user_id)
+    if user_sid:
+        await sio.enter_room(user_sid, active_streams[stream_id]["chat_room"])
+    
+    return {
+        "success": True,
+        "playbackUrl": stream["playbackUrl"],
+        "chatRoom": active_streams[stream_id]["chat_room"]
+    }
+
+@api_router.post("/live/{stream_id}/leave")
+async def leave_live_stream(
+    stream_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Leave a live stream"""
+    user_id = current_user["id"]
+    
+    if stream_id in active_streams and user_id in active_streams[stream_id]["viewers"]:
+        active_streams[stream_id]["viewers"].remove(user_id)
+        
+        # Update viewer count
+        await db.live_streams.update_one(
+            {"id": stream_id},
+            {"$set": {"viewerCount": len(active_streams[stream_id]["viewers"])}}
+        )
+        
+        # Remove from chat room
+        user_sid = connected_users.get(user_id)
+        if user_sid:
+            await sio.leave_room(user_sid, active_streams[stream_id]["chat_room"])
+    
+    return {"success": True}
+
+@api_router.put("/live/{stream_id}/end")
+async def end_live_stream(
+    stream_id: str,
+    current_user = Depends(get_current_user)
+):
+    """End a live stream"""
+    stream = await db.live_streams.find_one({
+        "id": stream_id,
+        "userId": current_user["id"]
+    })
+    
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    
+    if stream["status"] != "live":
+        raise HTTPException(status_code=400, detail="Stream is not live")
+    
+    # Update stream status
+    now = datetime.utcnow()
+    await db.live_streams.update_one(
+        {"id": stream_id},
+        {
+            "$set": {
+                "status": "ended",
+                "endedAt": now,
+                "viewerCount": 0
+            }
+        }
+    )
+    
+    # Clean up active stream
+    if stream_id in active_streams:
+        # Notify all viewers that stream ended
+        chat_room = active_streams[stream_id]["chat_room"]
+        await sio.emit('stream_ended', {
+            "streamId": stream_id,
+            "message": "The live stream has ended"
+        }, room=chat_room)
+        
+        del active_streams[stream_id]
+    
+    return {"success": True, "message": "Stream ended"}
+
+@api_router.get("/live/active")
+async def get_active_streams(
+    category: Optional[str] = None,
+    limit: int = 20
+):
+    """Get list of active live streams"""
+    query = {"status": "live"}
+    if category:
+        query["category"] = category
+    
+    cursor = db.live_streams.find(query).sort("startedAt", -1).limit(limit)
+    
+    streams = []
+    async for stream in cursor:
+        # Update viewer count from active streams
+        if stream["id"] in active_streams:
+            stream["viewerCount"] = len(active_streams[stream["id"]]["viewers"])
+        
+        streams.append(LiveStreamResponse(**stream))
+    
+    return {"streams": streams}
+
+# Live stream chat via Socket.IO
+@sio.event
+async def send_live_chat_message(sid, data):
+    """Send message in live stream chat"""
+    try:
+        stream_id = data.get("streamId")
+        message = data.get("message")
+        user_id = data.get("userId")
+        
+        if not all([stream_id, message, user_id]):
+            await sio.emit('error', {"message": "Missing required fields"}, room=sid)
+            return
+        
+        # Verify stream exists and is live
+        stream = await db.live_streams.find_one({"id": stream_id, "status": "live"})
+        if not stream:
+            await sio.emit('error', {"message": "Stream not found or not live"}, room=sid)
+            return
+        
+        # Verify user is in the stream
+        if stream_id not in active_streams or user_id not in active_streams[stream_id]["viewers"]:
+            await sio.emit('error', {"message": "You are not viewing this stream"}, room=sid)
+            return
+        
+        # Get user info
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            await sio.emit('error', {"message": "User not found"}, room=sid)
+            return
+        
+        # Broadcast message to all viewers
+        chat_message = {
+            "id": str(uuid.uuid4()),
+            "userId": user_id,
+            "username": user["username"],
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        await sio.emit('live_chat_message', chat_message, 
+                      room=active_streams[stream_id]["chat_room"])
+        
+    except Exception as e:
+        await sio.emit('error', {"message": str(e)}, room=sid)
+
 # Export the Socket.IO ASGI app for uvicorn
 # This enables Socket.IO functionality
 if __name__ == "__main__":
