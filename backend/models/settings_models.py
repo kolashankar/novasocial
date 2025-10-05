@@ -124,3 +124,62 @@ class DeviceInfo(BaseModel):
     isActive: bool = True
     lastSeen: datetime
     createdAt: datetime
+
+
+class SupportTicket(BaseModel):
+    id: str
+    userId: str
+    user: Optional[dict] = None
+    category: str  # "bug", "feature_request", "account_issue", "harassment", "technical", "other"
+    subject: str
+    description: str
+    priority: str = "medium"  # "low", "medium", "high", "urgent"
+    status: str = "open"  # "open", "in_progress", "resolved", "closed"
+    attachments: Optional[List[str]] = []  # Base64 images/files
+    assignedTo: Optional[str] = None  # Admin user ID
+    tags: Optional[List[str]] = []
+    createdAt: datetime
+    updatedAt: datetime
+    resolvedAt: Optional[datetime] = None
+
+
+class FAQ(BaseModel):
+    id: str
+    category: str  # "account", "privacy", "posting", "messaging", "technical", "safety"
+    question: str
+    answer: str
+    keywords: List[str] = []  # For search
+    isActive: bool = True
+    order: int = 0  # For ordering within category
+    views: int = 0
+    helpful: int = 0  # Helpful votes
+    notHelpful: int = 0  # Not helpful votes
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AppInfo(BaseModel):
+    version: str
+    buildNumber: str
+    releaseDate: datetime
+    platform: str  # "ios", "android", "web"
+    minOSVersion: str
+    features: List[str]
+    privacyPolicyUrl: str
+    termsOfServiceUrl: str
+    supportEmail: str
+    website: str
+
+
+class UserThemeSettings(BaseModel):
+    userId: str
+    themeMode: str = "system"  # "light", "dark", "system"
+    primaryColor: str = "#007AFF"  # iOS Blue default
+    accentColor: str = "#FF3B30"  # iOS Red default
+    fontSize: str = "medium"  # "small", "medium", "large", "extra_large"
+    fontFamily: str = "system"
+    highContrast: bool = False
+    reduceMotion: bool = False
+    colorBlindMode: Optional[str] = None  # "protanopia", "deuteranopia", "tritanopia"
+    createdAt: datetime
+    updatedAt: datetime
