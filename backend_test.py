@@ -14,7 +14,7 @@ import sys
 import time
 
 # Get backend URL from frontend .env
-BACKEND_URL = "https://socialwave-mobile.preview.emergentagent.com/api"
+BACKEND_URL = "https://reelphase-social.preview.emergentagent.com/api"
 
 # Test data for Phase 18 - Reels Testing
 TEST_USER_DATA = {

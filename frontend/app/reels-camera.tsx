@@ -241,7 +241,7 @@ export default function ReelsCamera() {
       const videoData = `data:video/mp4;base64,${videoPath}`;
       
       // Upload to backend with filters and AR effects
-      const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://socialwave-mobile.preview.emergentagent.com';
+      const backendUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || 'https://reelphase-social.preview.emergentagent.com';
       
       const response = await fetch(`${backendUrl}/api/reels/upload`, {
         method: 'POST',
