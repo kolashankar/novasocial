@@ -149,33 +149,56 @@ export const ConversationsList: React.FC = () => {
     }
   };
 
+  // Phase 14: Enhanced conversation rendering with status indicators
   const renderConversation = ({ item }: { item: Conversation }) => {
     const displayInfo = getDisplayInfo(item);
     const lastMessageText = item.lastMessage?.text || 
       (item.lastMessage?.messageType === 'image' ? '📷 Photo' : 'No messages yet');
+
+    // Get online status for direct conversations
+    const otherUser = !item.isGroup ? item.participants.find(p => p.id !== user?.id) : null;
+    const userStatus = otherUser ? userStatuses[otherUser.id] : null;
 
     return (
       <TouchableOpacity
         style={styles.conversationItem}
         onPress={() => router.push(`/(tabs)/chat/conversation/${item.id}`)}
       >
-        <Image
-          source={{ 
-            uri: displayInfo.image || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==' 
-          }}
-          style={styles.avatar}
-        />
+        <View style={styles.avatarContainer}>
+          <Image
+            source={{ 
+              uri: displayInfo.image || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==' 
+            }}
+            style={styles.avatar}
+          />
+          {/* Phase 14: Online status indicator */}
+          {!item.isGroup && userStatus?.isOnline && (
+            <View style={styles.onlineIndicator} />
+          )}
+        </View>
         
         <View style={styles.conversationContent}>
           <View style={styles.conversationHeader}>
             <Text style={styles.conversationName} numberOfLines={1}>
               {displayInfo.name}
             </Text>
-            {item.lastMessage && (
-              <Text style={styles.time}>
-                {formatTime(item.lastMessage.createdAt)}
-              </Text>
-            )}
+            <View style={styles.headerRight}>
+              {item.lastMessage && (
+                <Text style={styles.time}>
+                  {formatTime(item.lastMessage.createdAt)}
+                </Text>
+              )}
+              {/* Phase 14: Read receipts indicators */}
+              {item.lastMessage && item.lastMessage.sender.id === user?.id && (
+                <View style={styles.readReceiptContainer}>
+                  <Ionicons 
+                    name="checkmark-done" 
+                    size={16} 
+                    color={item.lastMessage.readBy?.length > 1 ? "#4f46e5" : "#94a3b8"} 
+                  />
+                </View>
+              )}
+            </View>
           </View>
           
           <View style={styles.messageRow}>
@@ -190,8 +213,81 @@ export const ConversationsList: React.FC = () => {
               </View>
             )}
           </View>
+          
+          {/* Phase 14: Show last seen for offline users */}
+          {!item.isGroup && userStatus && !userStatus.isOnline && (
+            <Text style={styles.lastSeenText}>
+              Last seen {formatTime(userStatus.lastSeen)}
+            </Text>
+          )}
         </View>
       </TouchableOpacity>
+    );
+  };
+
+  // Phase 14: Render filter tabs
+  const renderFilterTabs = () => (
+    <View style={styles.filterContainer}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+        {filters.map((filter) => (
+          <TouchableOpacity
+            key={filter.key}
+            style={[
+              styles.filterTab,
+              activeFilter === filter.key && styles.activeFilterTab
+            ]}
+            onPress={() => setActiveFilter(filter.key as any)}
+          >
+            <Ionicons 
+              name={filter.icon as any} 
+              size={20} 
+              color={activeFilter === filter.key ? '#ffffff' : '#64748b'} 
+            />
+            <Text style={[
+              styles.filterText,
+              activeFilter === filter.key && styles.activeFilterText
+            ]}>
+              {filter.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+      
+      {/* Search toggle */}
+      <TouchableOpacity
+        style={styles.searchToggle}
+        onPress={() => setShowSearch(!showSearch)}
+      >
+        <Ionicons 
+          name={showSearch ? "close" : "search"} 
+          size={20} 
+          color="#64748b" 
+        />
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Phase 14: Render search bar
+  const renderSearchBar = () => {
+    if (!showSearch) return null;
+    
+    return (
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color="#94a3b8" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search conversations..."
+          placeholderTextColor="#94a3b8"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoFocus
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+        )}
+      </View>
     );
   };
 
