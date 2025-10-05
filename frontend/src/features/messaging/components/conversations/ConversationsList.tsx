@@ -40,15 +40,48 @@ export const ConversationsList: React.FC = () => {
 
   const loadConversations = useCallback(async () => {
     try {
-      const data = await chatApi.getConversations();
+      // Phase 14: Use enhanced API with filters
+      const data = await chatApi.getFilteredConversations({
+        filterType: activeFilter,
+        searchQuery: searchQuery || undefined,
+      });
       setConversations(data);
+      
+      // Load user activity statuses for participants
+      if (data.length > 0) {
+        const allUserIds = new Set<string>();
+        data.forEach(conv => {
+          conv.participants.forEach(p => {
+            if (p.id !== user?.id) {
+              allUserIds.add(p.id);
+            }
+          });
+        });
+        
+        // Fetch activity statuses for all users
+        const statusPromises = Array.from(allUserIds).map(async (userId) => {
+          try {
+            const status = await chatApi.getUserActivity(userId);
+            return { userId, status };
+          } catch {
+            return { userId, status: { isOnline: false, lastSeen: new Date().toISOString() } };
+          }
+        });
+        
+        const statuses = await Promise.all(statusPromises);
+        const statusMap: Record<string, { isOnline: boolean; lastSeen: string }> = {};
+        statuses.forEach(({ userId, status }) => {
+          statusMap[userId] = status;
+        });
+        setUserStatuses(statusMap);
+      }
     } catch (error) {
       console.error('Failed to load conversations:', error);
       Alert.alert('Error', 'Failed to load conversations');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeFilter, searchQuery, user]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
