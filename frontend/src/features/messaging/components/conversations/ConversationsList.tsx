@@ -328,6 +328,12 @@ export const ConversationsList: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      {/* Phase 14: Filter tabs */}
+      {renderFilterTabs()}
+      
+      {/* Phase 14: Search bar */}
+      {renderSearchBar()}
+      
       <FlatList
         data={conversations}
         keyExtractor={(item) => item.id}
