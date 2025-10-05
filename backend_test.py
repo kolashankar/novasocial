@@ -13,7 +13,7 @@ import os
 import sys
 
 # Get backend URL from frontend .env
-BACKEND_URL = "https://social-stories-hub-1.preview.emergentagent.com/api"
+BACKEND_URL = "https://socialwave-mobile.preview.emergentagent.com/api"
 
 # Test data
 TEST_USER_DATA = {
