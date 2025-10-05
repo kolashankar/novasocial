@@ -3093,7 +3093,7 @@ async def sign_out(current_user = Depends(get_current_user)):
     }
 
 @api_router.post("/reports/content")
-async def report_content(report_data: ReportedContent, current_user = Depends(get_current_user)):
+async def report_content(report_data: ContentReportCreate, current_user = Depends(get_current_user)):
     """Report problematic content"""
     report_id = str(uuid.uuid4())
     now = datetime.utcnow()
