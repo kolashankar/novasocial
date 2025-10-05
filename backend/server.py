@@ -754,6 +754,278 @@ async def get_security_logs(
     return logs
 
 
+# PHASE 12: Profile & Account Management
+from models.settings_models import *
+
+class ProfileEditRequest(BaseModel):
+    username: Optional[str] = None
+    fullName: Optional[str] = None
+    bio: Optional[str] = None
+    profileImage: Optional[str] = None  # base64
+    interests: Optional[List[str]] = None
+
+class PrivacySettings(BaseModel):
+    isPrivateAccount: bool = False
+    allowDataSharing: bool = True
+    enableTwoFactorAuth: bool = False
+    showOnlineStatus: bool = True
+    allowDirectMessages: str = "everyone"  # "everyone", "followers", "none"
+    allowTagging: str = "everyone"  # "everyone", "followers", "none"
+
+@api_router.put("/profile/edit", response_model=UserResponse)
+async def edit_profile(request: ProfileEditRequest, current_user = Depends(get_current_user)):
+    """Edit user profile information"""
+    update_data = {}
+    
+    # Validate and update username if provided
+    if request.username is not None:
+        if not validate_username(request.username):
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-20 characters, alphanumeric and underscores only"
+            )
+        
+        # Check if username is already taken
+        existing_user = await db.users.find_one({
+            "username": request.username.lower(),
+            "id": {"$ne": current_user["id"]}
+        })
+        
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username already taken")
+        
+        update_data["username"] = request.username.lower()
+    
+    # Update other fields
+    if request.fullName is not None:
+        update_data["fullName"] = request.fullName
+    if request.bio is not None:
+        update_data["bio"] = request.bio
+    if request.profileImage is not None:
+        update_data["profileImage"] = request.profileImage
+    if request.interests is not None:
+        update_data["interests"] = request.interests
+    
+    # Update in database
+    if update_data:
+        await db.users.update_one(
+            {"id": current_user["id"]},
+            {"$set": update_data}
+        )
+    
+    # Get updated user
+    updated_user = await db.users.find_one({"id": current_user["id"]})
+    return UserResponse(**{k: v for k, v in updated_user.items() if k != "password"})
+
+@api_router.get("/profile/privacy-settings")
+async def get_privacy_settings(current_user = Depends(get_current_user)):
+    """Get user's privacy settings"""
+    settings = await db.privacy_settings.find_one({"userId": current_user["id"]})
+    
+    if not settings:
+        # Return default settings
+        default_settings = PrivacySettings()
+        return default_settings.dict()
+    
+    return settings
+
+@api_router.put("/profile/privacy-settings")
+async def update_privacy_settings(
+    settings: PrivacySettings, 
+    current_user = Depends(get_current_user)
+):
+    """Update user's privacy settings"""
+    settings_data = settings.dict()
+    settings_data.update({
+        "userId": current_user["id"],
+        "updatedAt": datetime.utcnow()
+    })
+    
+    await db.privacy_settings.replace_one(
+        {"userId": current_user["id"]},
+        settings_data,
+        upsert=True
+    )
+    
+    return {"success": True, "message": "Privacy settings updated successfully"}
+
+@api_router.post("/profile/private-account-toggle")
+async def toggle_private_account(current_user = Depends(get_current_user)):
+    """Toggle private account status"""
+    # Get current privacy settings
+    privacy_settings = await db.privacy_settings.find_one({"userId": current_user["id"]})
+    
+    current_status = False
+    if privacy_settings:
+        current_status = privacy_settings.get("isPrivateAccount", False)
+    
+    new_status = not current_status
+    
+    # Update privacy settings
+    await db.privacy_settings.update_one(
+        {"userId": current_user["id"]},
+        {
+            "$set": {
+                "isPrivateAccount": new_status,
+                "updatedAt": datetime.utcnow()
+            }
+        },
+        upsert=True
+    )
+    
+    return {
+        "success": True,
+        "isPrivateAccount": new_status,
+        "message": f"Account is now {'private' if new_status else 'public'}"
+    }
+
+class FollowRequestResponse(BaseModel):
+    id: str
+    requesterId: str
+    requester: UserResponse
+    targetUserId: str
+    status: str
+    createdAt: datetime
+
+@api_router.get("/profile/follow-requests", response_model=List[FollowRequestResponse])
+async def get_follow_requests(current_user = Depends(get_current_user)):
+    """Get pending follow requests for private account"""
+    requests = await db.follow_requests.find({
+        "targetUserId": current_user["id"],
+        "status": "pending"
+    }).sort("createdAt", -1).to_list(None)
+    
+    # Get requester info
+    requester_ids = [req["requesterId"] for req in requests]
+    requesters = await db.users.find({"id": {"$in": requester_ids}}).to_list(None)
+    requesters_map = {user["id"]: user for user in requesters}
+    
+    result = []
+    for request in requests:
+        requester_data = requesters_map.get(request["requesterId"])
+        if requester_data:
+            requester = UserResponse(**{k: v for k, v in requester_data.items() if k != "password"})
+            result.append(FollowRequestResponse(
+                **request,
+                requester=requester
+            ))
+    
+    return result
+
+@api_router.post("/profile/follow-request/{request_id}/approve")
+async def approve_follow_request(request_id: str, current_user = Depends(get_current_user)):
+    """Approve a follow request"""
+    # Find the request
+    follow_request = await db.follow_requests.find_one({
+        "id": request_id,
+        "targetUserId": current_user["id"],
+        "status": "pending"
+    })
+    
+    if not follow_request:
+        raise HTTPException(status_code=404, detail="Follow request not found")
+    
+    # Create follow relationship
+    follow_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    
+    new_follow = {
+        "id": follow_id,
+        "followerId": follow_request["requesterId"],
+        "followingId": current_user["id"],
+        "createdAt": now
+    }
+    
+    await db.follows.insert_one(new_follow)
+    
+    # Update request status
+    await db.follow_requests.update_one(
+        {"id": request_id},
+        {"$set": {"status": "approved", "updatedAt": now}}
+    )
+    
+    # Create notification
+    notification = {
+        "id": str(uuid.uuid4()),
+        "recipientId": follow_request["requesterId"],
+        "senderId": current_user["id"],
+        "type": "follow_request_approved",
+        "title": "Follow Request Approved",
+        "message": f"{current_user['username']} approved your follow request",
+        "relatedId": current_user["id"],
+        "relatedType": "user",
+        "isRead": False,
+        "createdAt": now
+    }
+    
+    await db.notifications.insert_one(notification)
+    
+    return {"success": True, "message": "Follow request approved"}
+
+@api_router.post("/profile/follow-request/{request_id}/deny")
+async def deny_follow_request(request_id: str, current_user = Depends(get_current_user)):
+    """Deny a follow request"""
+    result = await db.follow_requests.update_one(
+        {"id": request_id, "targetUserId": current_user["id"], "status": "pending"},
+        {"$set": {"status": "denied", "updatedAt": datetime.utcnow()}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Follow request not found")
+    
+    return {"success": True, "message": "Follow request denied"}
+
+class CreatorAccountRequest(BaseModel):
+    accountType: str = "creator"  # "creator", "business"
+    category: str  # "fitness", "food", "travel", etc.
+    description: str
+    websiteUrl: Optional[str] = None
+    contactEmail: Optional[str] = None
+
+@api_router.post("/profile/creator-verification")
+async def request_creator_verification(
+    request: CreatorAccountRequest,
+    current_user = Depends(get_current_user)
+):
+    """Request creator account verification"""
+    verification_request = {
+        "id": str(uuid.uuid4()),
+        "userId": current_user["id"],
+        "accountType": request.accountType,
+        "category": request.category,
+        "description": request.description,
+        "websiteUrl": request.websiteUrl,
+        "contactEmail": request.contactEmail,
+        "status": "pending",
+        "createdAt": datetime.utcnow(),
+        "reviewedAt": None,
+        "reviewedBy": None
+    }
+    
+    await db.creator_verification_requests.insert_one(verification_request)
+    
+    return {
+        "success": True,
+        "message": "Creator verification request submitted. You'll be notified when reviewed.",
+        "requestId": verification_request["id"]
+    }
+
+@api_router.get("/profile/creator-status")
+async def get_creator_status(current_user = Depends(get_current_user)):
+    """Get creator account status"""
+    creator_profile = await db.creator_profiles.find_one({"userId": current_user["id"]})
+    verification_request = await db.creator_verification_requests.find_one({
+        "userId": current_user["id"]
+    }, sort=[("createdAt", -1)])
+    
+    return {
+        "isCreator": creator_profile is not None,
+        "verificationStatus": verification_request.get("status") if verification_request else None,
+        "creatorProfile": creator_profile,
+        "lastRequest": verification_request
+    }
+
+
 # Posts Routes
 @api_router.post("/posts", response_model=PostResponse)
 async def create_post(post_data: PostCreate, current_user = Depends(get_current_user)):
