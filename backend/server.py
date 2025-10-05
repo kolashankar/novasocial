@@ -2864,8 +2864,7 @@ async def create_support_ticket(ticket_data: SupportTicketCreate, current_user =
     return {
         "success": True,
         "message": "Support ticket created successfully",
-        "ticketId": ticket_id,
-        "ticket": new_ticket
+        "ticketId": ticket_id
     }
 
 @api_router.get("/support/tickets", response_model=List[dict])
